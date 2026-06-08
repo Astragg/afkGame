@@ -1,5 +1,6 @@
 import { EVENT } from './events.js';
 import { creditWallet, payFromWallet, formatWallet, walletTotal } from './currency.js';
+import { addSkillXP, RACE_SKILL_DEPTH } from './skills.js';
 
 export const JOB_TYPES = {
   farmer: { wage: 12, skill: 'survival.farm', produces: 'food' },
@@ -66,6 +67,33 @@ function tickSettlementEconomy(settlement, agents, world, bus, tick) {
       }
       if (jobDef.type === 'mage' && tick % 48 === 0) {
         treasury.gems = (treasury.gems || 0) + 1;
+        addSkillXP(worker, 'magic', 'elemental', 15);
+        addSkillXP(worker, 'magic', 'enchant', 10);
+        worker.mana = Math.min(100, (worker.mana || 50) + 5);
+      }
+      if (jobDef.type === 'priest' && tick % 36 === 0) {
+        addSkillXP(worker, 'magic', 'healing', 12);
+      }
+      if (jobDef.type === 'guard' && tick % 24 === 0) {
+        addSkillXP(worker, 'combat', 'melee', 10);
+        addSkillXP(worker, 'combat', 'tactics', 8);
+      }
+      if (jobDef.type === 'noble' && tick % 48 === 0) {
+        addSkillXP(worker, 'leadership', 'govern', 15);
+        addSkillXP(worker, 'leadership', 'command', 10);
+      }
+      if (jobDef.type === 'thief' && tick % 48 === 0) {
+        addSkillXP(worker, 'crime', 'stealth', 12);
+      }
+      if (jobDef.type === 'adventurer' && tick % 36 === 0) {
+        addSkillXP(worker, 'combat', 'tactics', 10);
+        addSkillXP(worker, 'combat', 'melee', 8);
+      }
+      if (jobDef.type === 'merchant' && tick % 24 === 0) {
+        addSkillXP(worker, 'leadership', 'trade', 10);
+      }
+      if (jobDef.type === 'blacksmith' && tick % 36 === 0) {
+        addSkillXP(worker, 'craft', 'smith', 12);
       }
     }
   }
@@ -113,8 +141,61 @@ function tradeBetweenSettlements(world, from, bus, tick) {
     target.foodStore += amount;
     const treasury = getTreasury(from);
     creditWallet(treasury, Math.floor(amount * 0.4));
+    const trade = { from: from.name, to: target.name, goods: 'food', amount, tick };
+    from.recentTrades = pushRecent(from.recentTrades, trade);
+    target.recentTrades = pushRecent(target.recentTrades, { ...trade, inbound: true });
     bus.emit(EVENT.TRADE, { from: from.id, to: target.id, goods: 'food', amount, tick });
   }
+}
+
+function pushRecent(list, entry) {
+  list = list || [];
+  list.push(entry);
+  if (list.length > 8) list.shift();
+  return list;
+}
+
+const JOB_AFFINITY = {
+  farmer: { survival: ['farm', 'forage'], any: 1 },
+  fisher: { survival: ['fish'], any: 1 },
+  guard: { combat: ['melee', 'tactics'], leadership: ['command'] },
+  merchant: { leadership: ['trade', 'persuade'] },
+  blacksmith: { craft: ['smith', 'engineer'] },
+  mage: { magic: ['elemental', 'enchant', 'illusion'] },
+  priest: { magic: ['healing'] },
+  noble: { leadership: ['govern', 'command'] },
+  thief: { crime: ['stealth', 'pickpocket'] },
+  adventurer: { combat: ['tactics', 'melee'], survival: ['hunt'] },
+  clerk: { leadership: ['persuade'] },
+};
+
+const RACE_JOB_BONUS = {
+  Elf: { mage: 25, priest: 10 },
+  Dwarf: { blacksmith: 25, guard: 10 },
+  Orc: { guard: 20, adventurer: 15 },
+  Goblin: { thief: 25, merchant: 10 },
+  Human: { merchant: 10, noble: 10 },
+};
+
+export function jobSuitability(agent, jobType) {
+  let score = 5;
+  const aff = JOB_AFFINITY[jobType];
+  if (aff) {
+    for (const [branch, skills] of Object.entries(aff)) {
+      if (branch === 'any') { score += aff.any; continue; }
+      for (const sk of skills) {
+        score += (agent.skills?.[`${branch}.${sk}`] || 0) * 8;
+      }
+    }
+  }
+  score += (RACE_JOB_BONUS[agent.race]?.[jobType] || 0);
+  const branches = RACE_SKILL_DEPTH[agent.race] || [];
+  const jobBranch = { mage: 'magic', thief: 'crime', guard: 'combat', blacksmith: 'craft' }[jobType];
+  if (jobBranch && !branches.includes(jobBranch)) score -= 15;
+  if (agent.personality?.includes('brave') && (jobType === 'guard' || jobType === 'adventurer')) score += 12;
+  if (agent.personality?.includes('greedy') && jobType === 'merchant') score += 10;
+  if (agent.personality?.includes('lazy') && jobType === 'farmer') score -= 8;
+  return score;
 }
 
 function checkTierPromotion(settlement) {
@@ -139,18 +220,13 @@ function addSkillXP(agent, branch, skill) {
 }
 
 function rehireUnemployed(settlement, residents) {
-  const openSlots = settlement.jobs.filter(j => j.filled < j.slots);
-  if (!openSlots.length) return;
   const seekers = residents.filter(a => !a.job && a.age >= 16 && !a.imprisoned);
-  let si = 0;
-  for (const jobDef of openSlots) {
-    while (jobDef.filled < jobDef.slots && si < seekers.length) {
-      const agent = seekers[si++];
-      jobDef.filled++;
-      agent.job = jobDef.type;
-      agent.employerId = settlement.id;
-    }
-    if (si >= seekers.length) break;
+  for (const agent of seekers) {
+    const open = settlement.jobs.filter(j => j.filled < j.slots);
+    if (!open.length) break;
+    open.sort((a, b) => jobSuitability(agent, b.type) - jobSuitability(agent, a.type));
+    const best = open[0];
+    if (jobSuitability(agent, best.type) > 0) hireAgent(agent, settlement, best.type);
   }
 }
 

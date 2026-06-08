@@ -16,6 +16,8 @@ import { saveGame, loadGame, exportSave, deserializeAgent } from './save.js';
 import { PauseMenu } from './pauseMenu.js';
 import { tickConstruction, initSettlementConstruction, planNewBuildings } from './construction.js';
 import { createWallet } from './currency.js';
+import { initKingdoms, tickKingdoms } from './kingdoms.js';
+import { getBuildingInspectData } from './settlementInfo.js';
 
 const SPEEDS = [0, 0.25, 0.5, 1, 2, 4, 8, 'step'];
 const SPEED_LABELS = ['Pause', '0.25x', '0.5x', '1x', '2x', '4x', '8x', 'Step'];
@@ -35,7 +37,9 @@ class Game {
     this.lastFrame = 0;
     this.paused = false;
     this.inspectAgent = null;
+    this.inspectBuilding = null;
     this.crownedId = null;
+    this.kingdoms = [];
     this.hoverAgent = null;
     this.mouseX = 0;
     this.mouseY = 0;
@@ -60,6 +64,7 @@ class Game {
     this.agents = spawnAgents(this.world, agentCount, this.rng);
     this.world._agents = this.agents;
     this.guilds = initGuilds(this.world);
+    this.kingdoms = initKingdoms(this.world.settlements);
     this.animals = [...initWildlife(this.world, this.rng), ...initLivestock(this.world.settlements, this.rng)];
     this.world.animals = this.animals;
     this.world.dungeons = this.world.dungeons || [];
@@ -138,15 +143,26 @@ class Game {
           const btn = this.hitDivineButton(e.clientX, e.clientY);
           if (btn) { this.handleDivine(btn); return; }
         }
-        const agent = this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
-        if (agent) {
-          this.inspectAgent = agent;
-          this.renderer.selectedAgent = agent;
-          this.paused = true;
-          this.speedIndex = 0;
-        } else {
+        const buildingHit = this.renderer.hitTestBuilding(this.world, e.clientX, e.clientY);
+        if (buildingHit) {
+          this.inspectBuilding = getBuildingInspectData(
+            this.world, this.agents, buildingHit.settlement, buildingHit.hex
+          );
           this.inspectAgent = null;
           this.renderer.selectedAgent = null;
+        } else {
+          const agent = this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
+          if (agent) {
+            this.inspectAgent = agent;
+            this.inspectBuilding = null;
+            this.renderer.selectedAgent = agent;
+            this.paused = true;
+            this.speedIndex = 0;
+          } else {
+            this.inspectAgent = null;
+            this.inspectBuilding = null;
+            this.renderer.selectedAgent = null;
+          }
         }
       }
     });
@@ -173,7 +189,7 @@ class Game {
       }
       if (e.key === 'Escape') {
         if (this.pauseMenu.open) this.pauseMenu.close();
-        else { this.inspectAgent = null; this.renderer.selectedAgent = null; }
+        else { this.inspectAgent = null; this.inspectBuilding = null; this.renderer.selectedAgent = null; }
       }
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -282,6 +298,7 @@ class Game {
     this._run('social', () => tickSocial(this.agents, this.bus, this.tick, this.rng, this.world));
     this._run('animals', () => { this.animals = tickAnimals(this.animals, this.world, this.agents, this.tick); this.world.animals = this.animals; });
     this._run('adventuring', () => tickAdventuring(this.agents, this.world, this.world.dungeons, this.bus, this.tick));
+    this._run('kingdoms', () => tickKingdoms(this.world, this.agents, this.kingdoms, this.bus, this.tick));
 
     // periodically remove dead agents so arrays don't grow without bound
     if (this.tick % 240 === 0) this.purgeDead();
@@ -343,6 +360,8 @@ class Game {
       speedIndex: this.speedIndex,
       speedLabel: SPEED_LABELS[this.speedIndex],
       inspectAgent: this.inspectAgent,
+      inspectBuilding: this.inspectBuilding,
+      animals: this.animals,
       hoverAgent: this.hoverAgent,
       mouseX: this.mouseX,
       mouseY: this.mouseY,
@@ -372,6 +391,7 @@ if (saved) {
   });
   game.world._agents = game.agents;
   game.guilds = saved.guilds || initGuilds(game.world);
+  game.kingdoms = initKingdoms(game.world.settlements);
   game.crownedId = saved.crownedId;
   for (const a of game.agents) if (a.id === game.crownedId) a.crowned = true;
 }

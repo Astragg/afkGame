@@ -51,4 +51,6 @@ export const EVENT = {
   LEVEL_UP: 'levelUp',
   GUILD_JOIN: 'guildJoin',
   DUNGEON_CLEAR: 'dungeonClear',
+  CONQUEST: 'conquest',
+  WAR: 'war',
 };

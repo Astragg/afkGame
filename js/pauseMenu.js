@@ -10,7 +10,8 @@ export class PauseMenu {
     this.scroll = 0;
     this.rankCategory = 'swordsman';
     this.selectedFamily = 0;
-    this.bounds = { tabs: [], close: null, categories: [] };
+    this.selectedSettlement = 0;
+    this.bounds = { tabs: [], close: null, categories: [], settlements: [] };
   }
 
   toggle() {
@@ -37,6 +38,10 @@ export class PauseMenu {
       const c = b.categories[i];
       if (mx >= c.x && mx <= c.x + c.w && my >= c.y && my <= c.y + c.h) return { action: 'category', key: c.key };
     }
+    for (let i = 0; i < (b.settlements || []).length; i++) {
+      const s = b.settlements[i];
+      if (mx >= s.x && mx <= s.x + s.w && my >= s.y && my <= s.y + s.h) return { action: 'settlement', index: i };
+    }
     if (mx >= b.panel.x && mx <= b.panel.x + b.panel.w && my >= b.panel.y && my <= b.panel.y + b.panel.h) {
       return { action: 'panel' };
     }
@@ -48,12 +53,13 @@ export class PauseMenu {
     if (hit.action === 'close' || hit.action === 'backdrop') { this.close(); return true; }
     if (hit.action === 'tab') { this.tab = hit.index; this.scroll = 0; return true; }
     if (hit.action === 'category') { this.rankCategory = hit.key; this.scroll = 0; return true; }
+    if (hit.action === 'settlement') { this.selectedSettlement = hit.index; this.scroll = 0; return true; }
     return true;
   }
 
   draw(ctx, canvasW, canvasH, game) {
     if (!this.open) return;
-    const rankings = computeRankings(game.agents, game.world);
+    const rankings = computeRankings(game.agents, game.world, game.kingdoms);
 
     ctx.fillStyle = 'rgba(5,8,18,0.88)';
     ctx.fillRect(0, 0, canvasW, canvasH);
@@ -241,16 +247,81 @@ export class PauseMenu {
   }
 
   drawSettlements(ctx, px, y, pw, rankings) {
-    let sy = y + 10;
+    const list = rankings.settlements || [];
+    this.bounds.settlements = [];
+    let sy = y + 8 - this.scroll;
+    const listW = 280;
     ctx.textAlign = 'left';
-    for (const s of rankings.settlements) {
-      ctx.fillStyle = '#c0d8f0';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`${s.name} (${s.tier})`, px + 24, sy);
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const active = i === this.selectedSettlement;
+      roundRect(ctx, px + 20, sy - 12, listW, 22, 4);
+      ctx.fillStyle = active ? 'rgba(74,104,168,0.5)' : 'rgba(30,38,58,0.5)';
+      ctx.fill();
+      this.bounds.settlements.push({ x: px + 20, y: sy - 12, w: listW, h: 22 });
+      ctx.fillStyle = active ? '#e8f0ff' : '#b0c8e8';
+      ctx.font = '600 12px sans-serif';
+      ctx.fillText(`${s.name}`, px + 28, sy + 2);
       ctx.fillStyle = '#8098b8';
-      ctx.font = '11px sans-serif';
-      ctx.fillText(`Pop ${s.pop} · Treasury ${s.treasury} · Building ${s.builds} sites`, px + 240, sy);
-      sy += 22;
+      ctx.font = '10px sans-serif';
+      ctx.fillText(`${s.tier} · pop ${s.pop}`, px + 160, sy + 2);
+      sy += 26;
+    }
+
+    const sel = list[this.selectedSettlement];
+    if (!sel) return;
+    let dx = px + 320;
+    let dy = y + 8;
+    const dw = pw - 340;
+    ctx.fillStyle = '#a0c0e8';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(`${sel.name} — ${sel.tier}`, dx, dy);
+    dy += 22;
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#90a8c8';
+    const info = [
+      `Ruler: ${sel.ruler}`,
+      `Realm: ${sel.kingdom} (${sel.realmSize} settlements)`,
+      `Military power: ${sel.military}`,
+      sel.liege ? `Liege: ${sel.liege}` : null,
+      `Territory: ${sel.territory} hexes · Food: ${sel.food} · Treasury: ${sel.treasury}`,
+      `Jobs: ${Object.entries(sel.jobs || {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`,
+      `Buildings: ${(sel.buildings || []).map(b => b.type).join(', ') || 'none'}`,
+      sel.builds ? `Under construction: ${sel.builds} sites` : null,
+    ].filter(Boolean);
+    for (const line of info) {
+      ctx.fillText(line, dx, dy);
+      dy += 16;
+    }
+
+    dy += 8;
+    ctx.fillStyle = '#7aa2ff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('Recent Trades', dx, dy); dy += 16;
+    ctx.fillStyle = '#8098b8';
+    ctx.font = '10px sans-serif';
+    for (const t of (sel.trades || []).slice(0, 4)) {
+      ctx.fillText(`${t.from} → ${t.to}: ${t.amount} ${t.goods}`, dx, dy); dy += 14;
+    }
+    if (!sel.trades?.length) { ctx.fillText('No recent trades', dx, dy); dy += 14; }
+
+    dy += 6;
+    ctx.fillStyle = '#7aa2ff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('Prisoners', dx, dy); dy += 16;
+    ctx.fillStyle = '#8098b8';
+    for (const p of (sel.prisoners || []).slice(0, 5)) {
+      ctx.fillText(`${p.name}: ${p.crime} — ${p.status}`, dx, dy); dy += 14;
+    }
+    if (!sel.prisoners?.length) { ctx.fillText('No prisoners', dx, dy); dy += 14; }
+
+    dy += 6;
+    ctx.fillStyle = '#7aa2ff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('Recent Events', dx, dy); dy += 16;
+    ctx.fillStyle = '#8098b8';
+    for (const e of (sel.events || []).slice(0, 4)) {
+      ctx.fillText(String(e.text || e).slice(0, 55), dx, dy); dy += 14;
     }
   }
 }

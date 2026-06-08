@@ -9,7 +9,7 @@ export const BUILDING_DEFS = {
   tavern:     { ticks: 96,  cost: { silver: 150, copper: 0 },   capacity: 0, label: 'Tavern' },
   barracks:   { ticks: 168, cost: { silver: 250, copper: 0 },   capacity: 0, label: 'Barracks' },
   temple:     { ticks: 200, cost: { silver: 300, gems: 1 },     capacity: 0, label: 'Temple' },
-  prison:     { ticks: 144, cost: { silver: 180, copper: 0 },   capacity: 4, label: 'Prison' },
+  prison:     { ticks: 144, cost: { silver: 180, copper: 0 },   capacity: 12, label: 'Prison' },
   guild_hall: { ticks: 180, cost: { silver: 220, tokens: 2 },   capacity: 0, label: 'Guild Hall' },
   granary:    { ticks: 108, cost: { silver: 100, copper: 0 },   capacity: 0, label: 'Granary' },
 };

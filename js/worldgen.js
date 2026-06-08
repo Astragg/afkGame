@@ -32,7 +32,7 @@ function fbm(hash, x, y, octaves = 5) {
   return v / total;
 }
 
-export const WORLD_RADIUS = 64;
+export const WORLD_RADIUS = 84;
 const SEA_LEVEL = 0.36;
 
 export function generateWorld(seed, radius = WORLD_RADIUS) {
@@ -191,7 +191,7 @@ function placeSettlements(hexMap, rng) {
     h.walkable && h.elevation >= SEA_LEVEL + 0.04 && h.elevation < 0.72 &&
     [BIOMES.GRASSLAND.id, BIOMES.MEADOW.id, BIOMES.FOREST.id, BIOMES.SAVANNA.id].includes(h.biomeId)
   );
-  const count = Math.min(28, Math.max(12, Math.floor(candidates.length * 0.006)));
+  const count = Math.min(38, Math.max(16, Math.floor(candidates.length * 0.005)));
   const picked = rng.shuffle(candidates).slice(0, count);
   const settlements = [];
   picked.forEach((hex, i) => {
@@ -211,9 +211,13 @@ function placeSettlements(hexMap, rng) {
       buildings: [],
       jobs: startingJobs(i < 3 ? 'town' : i < 8 ? 'village' : 'hamlet'),
       prisoners: [],
-      granaryCapacity: 400,
+      recentTrades: [],
+      recentEvents: [],
+      granaryCapacity: 600,
       constructionQueue: [],
       territory: [],
+      rulerId: null,
+      liegeId: null,
     };
     settlements.push(settlement);
     const territoryRadius = 3 + rng.int(0, 2);
@@ -229,12 +233,11 @@ function placeSettlements(hexMap, rng) {
 }
 
 function startingJobs(tier) {
-  // self-sufficient baseline workforce so settlements can feed themselves
   const cfg = {
-    town:    { farmer: 7, fisher: 3, guard: 3, merchant: 2, blacksmith: 1, clerk: 2, priest: 1, noble: 1 },
-    village: { farmer: 5, fisher: 2, guard: 2, merchant: 1, blacksmith: 1, clerk: 1, priest: 1, noble: 0 },
-    hamlet:  { farmer: 4, fisher: 2, guard: 1, merchant: 1, blacksmith: 1, clerk: 1, priest: 0, noble: 0 },
-  }[tier] || { farmer: 4, fisher: 1, guard: 1, clerk: 1 };
+    town:    { farmer: 4, fisher: 2, guard: 3, merchant: 2, blacksmith: 2, mage: 2, priest: 1, noble: 1, thief: 1, adventurer: 2, clerk: 1 },
+    village: { farmer: 3, fisher: 2, guard: 2, merchant: 1, blacksmith: 1, mage: 1, priest: 1, thief: 1, adventurer: 1, clerk: 1 },
+    hamlet:  { farmer: 2, fisher: 1, guard: 1, merchant: 1, blacksmith: 1, mage: 1, clerk: 1 },
+  }[tier] || { farmer: 2, fisher: 1, guard: 1, clerk: 1 };
   const jobs = [];
   for (const [type, slots] of Object.entries(cfg)) {
     if (slots > 0) jobs.push({ type, slots, filled: 0 });
@@ -248,6 +251,9 @@ export function addJobSlots(settlement, bType) {
     market: [{ type: 'merchant', slots: 1, filled: 0 }],
     tavern: [{ type: 'clerk', slots: 1, filled: 0 }],
     barracks: [{ type: 'guard', slots: 2, filled: 0 }],
+    temple: [{ type: 'mage', slots: 1, filled: 0 }, { type: 'priest', slots: 1, filled: 0 }],
+    prison: [{ type: 'guard', slots: 1, filled: 0 }],
+    guild_hall: [{ type: 'adventurer', slots: 2, filled: 0 }],
     home: [],
   };
   if (slots[bType]) settlement.jobs.push(...slots[bType]);

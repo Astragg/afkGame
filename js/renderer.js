@@ -5,6 +5,7 @@ import {
 } from './textures.js';
 import { BIOME_BY_ID } from './biomes.js';
 import { formatWallet } from './currency.js';
+import { getAnimalColor } from './animals.js';
 
 const THEME = {
   glass: 'rgba(16,20,34,0.86)',
@@ -157,6 +158,9 @@ export class Renderer {
     // buildings + construction + dungeons (bounded iteration)
     this._drawStructures(ctx, world, size, w, h);
 
+    // animals (culled)
+    if (ui?.animals?.length) this._drawAnimals(ctx, ui.animals, size, w, h);
+
     // agents (culled)
     this._drawAgents(ctx, agents, size, w, h);
 
@@ -170,6 +174,7 @@ export class Renderer {
 
     // UI
     this.drawHUD(world, agents, timeOfDay, weather, ui);
+    if (ui?.inspectBuilding) this.drawBuildingPanel(ui.inspectBuilding, ui);
     if (ui?.inspectAgent) this.drawInspectPanel(ui.inspectAgent, ui);
     if (ui?.hoverAgent) this.drawTooltip(ui.hoverAgent, ui.mouseX, ui.mouseY);
     else if (this.hoverHex && !ui?.inspectAgent && !ui?.pauseMenuOpen) this.drawHexTooltip(this.hoverHex, ui?.mouseX, ui?.mouseY);
@@ -227,6 +232,29 @@ export class Renderer {
       ctx.lineTo(scr.x + size * 0.26, scr.y + size * 0.18);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  _drawAnimals(ctx, animals, size, w, h) {
+    const margin = size * 2;
+    for (const animal of animals) {
+      const p = hexToPixel(animal.q, animal.r, this.hexSize);
+      if (!this._onScreen(p.x, p.y, w, h, margin)) continue;
+      const scr = this.worldToScreen(p.x, p.y);
+      const r = size * (animal.category === 'livestock' ? 0.14 : 0.11);
+      const ox = (animal.id.charCodeAt(animal.id.length - 1) % 5 - 2) * size * 0.12;
+      const oy = (animal.id.charCodeAt(0) % 5 - 2) * size * 0.08;
+      ctx.fillStyle = getAnimalColor(animal.type);
+      ctx.beginPath();
+      if (animal.category === 'livestock') {
+        ctx.fillRect(scr.x + ox - r, scr.y - r * 0.6 + oy, r * 2, r * 1.2);
+      } else {
+        ctx.arc(scr.x + ox, scr.y + oy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 0.8;
       ctx.stroke();
     }
   }
@@ -590,7 +618,91 @@ export class Renderer {
     ctx.textAlign = 'left';
   }
 
+  drawBuildingPanel(data, ui) {
+    if (!data) return;
+    const ctx = this.ctx;
+    const pw = 300, ph = Math.min(420, this.canvas.height - 48);
+    const px = 16, py = 20;
+    panel(ctx, px, py, pw, ph);
+    accentBar(ctx, px, py, pw, '#6a88c0');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = THEME.text;
+    ctx.font = '700 16px "Segoe UI", sans-serif';
+    ctx.fillText((data.type || 'building').replace('_', ' '), px + 16, py + 30);
+    ctx.font = '11px "Segoe UI", sans-serif';
+    ctx.fillStyle = THEME.dim;
+    ctx.fillText(data.settlement || '', px + 16, py + 48);
+    let y = py + 68;
+    const lines = [];
+    if (data.ruler) lines.push(`Ruler: ${data.ruler}`);
+    if (data.food != null) lines.push(`Food stores: ${data.food}`);
+    if (data.treasury) lines.push(`Treasury: ${data.treasury}`);
+    if (data.capacity != null) lines.push(`Capacity: ${data.capacity}`);
+    if (data.guards != null) lines.push(`Guards stationed: ${data.guards}`);
+    if (data.yields) lines.push(data.yields);
+    if (data.residents?.length) {
+      lines.push('Residents:');
+      data.residents.forEach(r => lines.push(`  · ${r}`));
+    }
+    if (data.mages?.length) lines.push(`Clergy: ${data.mages.join(', ')}`);
+    if (data.prisoners?.length) {
+      lines.push('Prisoners:');
+      data.prisoners.forEach(p => lines.push(`  · ${p.name}: ${p.crime} (${p.status})`));
+    } else if (data.type === 'prison') lines.push('No prisoners');
+    if (data.trades?.length) {
+      lines.push('Recent trades:');
+      data.trades.forEach(t => lines.push(`  · ${t.from}→${t.to} ${t.amount} ${t.goods}`));
+    }
+    if (data.events?.length) {
+      lines.push('Events:');
+      data.events.forEach(e => lines.push(`  · ${(e.text || e).slice(0, 40)}`));
+    }
+    if (!data.completed) lines.push(`Building… ${Math.floor((data.progress || 0) * 100)}%`);
+    ctx.font = '11px "Segoe UI", sans-serif';
+    for (const line of lines) {
+      ctx.fillStyle = line.startsWith('  ') ? '#8098b8' : THEME.dim;
+      ctx.fillText(line.slice(0, 42), px + 16, y);
+      y += 14;
+      if (y > py + ph - 24) break;
+    }
+    ctx.fillStyle = '#607090';
+    ctx.font = '10px sans-serif';
+    ctx.fillText('Esc to close', px + 16, py + ph - 10);
+  }
+
   // ---------- hit tests ----------
+  hitTestBuilding(world, sx, sy) {
+    const size = this.hexSize * this.camera.zoom;
+    const hitR = (size * 0.55) ** 2;
+    let best = null, bestD = Infinity;
+    for (const settlement of world.settlements || []) {
+      for (const b of settlement.buildings || []) {
+        const hex = world.hexMap.get(hexKey(b.hex.q, b.hex.r));
+        if (!hex?.building) continue;
+        const p = hexToPixel(b.hex.q, b.hex.r, this.hexSize);
+        const scr = this.worldToScreen(p.x, p.y);
+        const dx = sx - scr.x, dy = sy - scr.y;
+        const d = dx * dx + dy * dy;
+        if (d < hitR && d < bestD) {
+          bestD = d;
+          best = { settlement, hex, building: hex.building };
+        }
+      }
+      for (const site of settlement.constructionQueue || []) {
+        const p = hexToPixel(site.hex.q, site.hex.r, this.hexSize);
+        const scr = this.worldToScreen(p.x, p.y);
+        const dx = sx - scr.x, dy = sy - scr.y;
+        const d = dx * dx + dy * dy;
+        if (d < hitR && d < bestD) {
+          bestD = d;
+          const hex = world.hexMap.get(hexKey(site.hex.q, site.hex.r));
+          best = { settlement, hex, building: hex?.building || { type: site.type, underConstruction: true } };
+        }
+      }
+    }
+    return best;
+  }
+
   hitTestAgent(agents, sx, sy) {
     const size = this.hexSize * this.camera.zoom;
     const hitR = (size * 0.5) ** 2;
@@ -716,8 +828,8 @@ function drawWeatherIcon(ctx, cx, cy, r, weather) {
 }
 
 const ACTION_COLORS = {
-  eat: '#e0b84a', sleep: '#6f8ee0', sleep_wild: '#c07a3a', work: '#82c060',
-  steal: '#e05050', patrol: '#5f93cc', travel: '#9aa4b4', socialize: '#d77ab0',
+  eat: '#e0b84a', sleep: '#6f8ee0', sleep_wild: '#c07a3a', rest: '#8098d0', work: '#82c060',
+  steal: '#e05050', patrol: '#5f93cc', conquer: '#c04040', travel: '#9aa4b4', socialize: '#d77ab0',
   quest: '#a86fd6', hunt: '#9a7a4a', fish: '#4aa0c0', adventure: '#e06a6a', idle: '#5a6378',
 };
 

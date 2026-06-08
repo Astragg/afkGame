@@ -70,7 +70,17 @@ function attemptArrest(criminal, agents, world, bus, tick) {
   const settlement = world.settlements.find(s => s.id === criminal.settlementId);
   if (settlement) {
     settlement.prisoners = settlement.prisoners || [];
-    settlement.prisoners.push({ agentId: criminal.id, sentence: 0, trialPending: true });
+    const lastCrime = criminal.crimes?.[criminal.crimes.length - 1];
+    settlement.prisoners.push({
+      agentId: criminal.id,
+      name: criminal.name,
+      crimeType: lastCrime?.type || 'unknown',
+      arrestedTick: tick,
+      sentence: 0,
+      trialPending: true,
+    });
+    settlement.recentEvents = pushSettlementEvent(settlement,
+      `${criminal.name} arrested for ${lastCrime?.type || 'crimes'}`, tick);
   }
 }
 
@@ -159,6 +169,13 @@ function resolveCrime(agent, agents, world, bus, tick, timeOfDay) {
   commitCrime(agent, agent.pendingCrime, agent.crimeTarget, agents, world, bus, tick, timeOfDay);
   agent.pendingCrime = null;
   agent.crimeTarget = null;
+}
+
+function pushSettlementEvent(settlement, text, tick) {
+  settlement.recentEvents = settlement.recentEvents || [];
+  settlement.recentEvents.push({ tick, text });
+  if (settlement.recentEvents.length > 10) settlement.recentEvents.shift();
+  return settlement.recentEvents;
 }
 
 export function pardonAgent(agent, world) {

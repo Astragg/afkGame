@@ -1,7 +1,7 @@
 import { walletTotal } from './currency.js';
-import { getTotalSkill } from './skills.js';
+import { buildSettlementDetails } from './settlementInfo.js';
 
-export function computeRankings(agents, world) {
+export function computeRankings(agents, world, kingdoms) {
   const living = agents.filter(a => !a.dead);
 
   return {
@@ -13,13 +13,7 @@ export function computeRankings(agents, world) {
     wealthy: topBy(living, a => walletTotal(a.wallet), 10),
     oldest: topBy(living, a => a.age, 10),
     families: buildFamilyList(living),
-    settlements: (world.settlements || []).map(s => ({
-      name: s.name,
-      tier: s.tier,
-      pop: s.population,
-      treasury: formatSettlementTreasury(s),
-      builds: (s.constructionQueue || []).length,
-    })),
+    settlements: buildSettlementDetails(world, agents, kingdoms),
     worldStats: {
       hexes: world.hexMap?.size || 0,
       agents: living.length,
@@ -87,9 +81,19 @@ function topBy(agents, fn, n) {
 function rankDetail(a) {
   const parts = [];
   if (a.job) parts.push(a.job);
+  const topSkill = getTopSkillLabel(a);
+  if (topSkill) parts.push(topSkill);
   if (a.crowned) parts.push('♛');
   if (!a.hasHome) parts.push('homeless');
   return parts.join(' · ') || 'wanderer';
+}
+
+function getTopSkillLabel(a) {
+  let best = '', bestV = 0;
+  for (const [k, v] of Object.entries(a.skills || {})) {
+    if (v > bestV) { bestV = v; best = k.split('.')[1]; }
+  }
+  return bestV > 0 ? `${best} ${bestV}` : '';
 }
 
 function buildFamilyList(agents) {
@@ -130,14 +134,3 @@ export function formatFamilyTree(members, allAgents) {
   return lines;
 }
 
-function formatSettlementTreasury(s) {
-  const w = s.treasuryWallet;
-  if (w) {
-    const parts = [];
-    if (w.gold) parts.push(`${w.gold}g`);
-    if (w.silver) parts.push(`${w.silver}s`);
-    if (w.gems) parts.push(`${w.gems}♦`);
-    return parts.join(' ') || '0';
-  }
-  return `${Math.floor(s.treasury || 0)}s`;
-}

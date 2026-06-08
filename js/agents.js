@@ -1,8 +1,9 @@
 import { RNG } from './rng.js';
 import { findPath, hexKey, hexNeighbors, getMoveCost } from './hex.js';
 import { RACE_LIST, RACES, generateName, generatePersonality } from './races.js';
-import { createSkills } from './skills.js';
-import { hireAgent, JOB_TYPES } from './economy.js';
+import { createSkills, SKILL_BRANCHES, RACE_SKILL_DEPTH, addSkillXP } from './skills.js';
+import { hireAgent, jobSuitability } from './economy.js';
+import { executeConquer } from './kingdoms.js';
 import { commitCrime } from './crime.js';
 import { assignQuest } from './guilds.js';
 import { hunt, fish } from './animals.js';
@@ -11,7 +12,7 @@ import { createWallet, creditWallet } from './currency.js';
 import { assignAgentHome, agentAtHome } from './construction.js';
 
 const ACTIONS = [
-  'eat', 'sleep', 'work', 'steal', 'patrol', 'travel', 'socialize',
+  'eat', 'sleep', 'work', 'steal', 'patrol', 'conquer', 'travel', 'socialize',
   'quest', 'farm', 'fish', 'hunt', 'adventure', 'idle',
 ];
 
@@ -41,7 +42,7 @@ export function spawnAgents(world, count, rng) {
 }
 
 export function getAgentCountForWorld(settlements) {
-  return Math.min(350, Math.max(150, settlements.length * 18));
+  return Math.min(420, Math.max(160, settlements.length * 12));
 }
 
 function weightedRace(rng, i) {
@@ -99,12 +100,27 @@ export function createAgent(index, race, hex, settlement, rng) {
     },
   };
   if (agent.personality.includes('greedy')) creditWallet(agent.wallet, 20);
+  grantStartingSkills(agent, race, rng);
   return agent;
 }
 
+function grantStartingSkills(agent, race, rng) {
+  const branches = RACE_SKILL_DEPTH[race] || RACE_SKILL_DEPTH.Human;
+  for (const branch of branches) {
+    const skills = SKILL_BRANCHES[branch] || [];
+    const pick = skills[rng.int(0, skills.length - 1)];
+    const key = `${branch}.${pick}`;
+    if (agent.skills[key] !== undefined) {
+      agent.skills[key] = rng.int(1, 3);
+    }
+  }
+}
+
 function tryHire(agent, settlement) {
-  for (const jobDef of settlement.jobs) {
-    if (jobDef.filled < jobDef.slots) {
+  const open = settlement.jobs.filter(j => j.filled < j.slots);
+  open.sort((a, b) => jobSuitability(agent, b.type) - jobSuitability(agent, a.type));
+  for (const jobDef of open) {
+    if (jobSuitability(agent, jobDef.type) > -5) {
       hireAgent(agent, settlement, jobDef.type);
       return;
     }
@@ -189,6 +205,7 @@ function chooseAction(agent, agents, world, guilds, timeOfDay) {
   const greedy = agent.personality.includes('greedy');
   const brave = agent.personality.includes('brave');
   const lazy = agent.personality.includes('lazy');
+  const onDuty = agent.job === 'guard' && isNight;
 
   for (const action of ACTIONS) {
     let score = 0;
@@ -198,11 +215,13 @@ function chooseAction(agent, agents, world, guilds, timeOfDay) {
         if (agent.needs.hunger < 30) score += 50;
         break;
       case 'sleep':
-        score = isNight ? (100 - agent.needs.rest) * 1.5 + 30 : (100 - agent.needs.rest);
-        if (isNight) score += 20;
+        score = isNight ? (100 - agent.needs.rest) * 2 + 50 : (100 - agent.needs.rest);
+        if (isNight && !onDuty) score += 80;
+        if (agent.needs.rest < 35) score += 30;
         break;
       case 'work':
-        score = agent.job ? (lazy ? 20 : 60) + agent.needs.esteem * 0.3 : 0;
+        if (isNight && !onDuty) score = 0;
+        else score = agent.job ? (lazy ? 15 : 55) + agent.needs.esteem * 0.3 : 0;
         break;
       case 'steal':
         score = greedy ? 40 + (100 - agent.needs.hunger) : 5;
@@ -211,7 +230,12 @@ function chooseAction(agent, agents, world, guilds, timeOfDay) {
         score += (agent.skills?.['crime.stealth'] || 0) * 3;
         break;
       case 'patrol':
-        score = agent.job === 'guard' ? 70 : 0;
+        score = agent.job === 'guard' ? (isNight ? 85 : 55) : 0;
+        break;
+      case 'conquer':
+        score = (agent.job === 'guard' || agent.job === 'noble') ? 35 + (agent.skills?.['leadership.command'] || 0) * 6 : 0;
+        if (brave) score += 20;
+        if (isNight) score *= 0.2;
         break;
       case 'socialize':
         score = (100 - agent.needs.social) * 0.8;
@@ -258,23 +282,27 @@ function executeAction(agent, action, agents, world, guilds, bus, tick, timeOfDa
       if (eat(agent, settlement)) break;
       pathTo(agent, { q: agent.homeQ, r: agent.homeR }, world.hexMap);
       break;
-    case 'sleep':
-      if (timeOfDay < 6 || timeOfDay > 20 || agent.needs.rest < 40) {
+    case 'sleep': {
+      const isNight = timeOfDay < 6 || timeOfDay > 21;
+      if (isNight || agent.needs.rest < 45) {
         const atHome = agentAtHome(agent, world);
         const inWilderness = !agent.hasHome || !atHome;
-        const restGain = atHome ? 18 : inWilderness ? 5 : 8;
+        const restGain = atHome ? (isNight ? 22 : 14) : inWilderness ? (isNight ? 8 : 5) : 10;
         agent.needs.rest = Math.min(100, agent.needs.rest + restGain);
         if (inWilderness) {
-          agent.needs.safety = Math.max(0, agent.needs.safety - 3);
+          agent.needs.safety = Math.max(0, agent.needs.safety - (isNight ? 4 : 2));
           agent.currentAction = 'sleep_wild';
           if (tick % 24 === 0) agent.addEvent(tick, 'Slept under the open sky');
         } else {
-          agent.currentAction = 'sleep';
+          agent.currentAction = isNight ? 'sleep' : 'rest';
         }
+        if (isNight && agent.job === 'mage') addSkillXP(agent, 'magic', 'illusion', 5);
       }
-      if (agent.hasHome) pathTo(agent, { q: agent.homeQ, r: agent.homeR }, world.hexMap);
-      else if (Math.random() < 0.15) wander(agent, world.hexMap);
+      if (agent.hasHome && (timeOfDay < 6 || timeOfDay > 20)) {
+        pathTo(agent, { q: agent.homeQ, r: agent.homeR }, world.hexMap);
+      } else if (!agent.hasHome && Math.random() < 0.1) wander(agent, world.hexMap);
       break;
+    }
     case 'work':
       if (settlement && agent.job) {
         agent.needs.esteem = Math.min(100, agent.needs.esteem + 2);
@@ -293,6 +321,10 @@ function executeAction(agent, action, agents, world, guilds, bus, tick, timeOfDa
       break;
     case 'patrol':
       patrol(agent, world.hexMap);
+      break;
+    case 'conquer':
+      if (settlement) executeConquer(agent, settlement, world, bus, tick);
+      else wander(agent, world.hexMap);
       break;
     case 'socialize':
       const other = agents.find(a => a.id !== agent.id && a.settlementId === agent.settlementId && hexDistance(agent, a) <= 2);

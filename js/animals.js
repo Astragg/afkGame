@@ -17,7 +17,7 @@ export function initWildlife(world, rng) {
   for (const hex of world.hexMap.values()) {
     if (!hex.walkable || hex.settlementId) continue;
     const types = WILDLIFE_BY_BIOME[hex.biomeId];
-    if (!types || rng.next() > 0.15) continue;
+    if (!types || rng.next() > 0.28) continue;
     const count = rng.int(1, 3);
     hex.wildlife = count;
     for (let i = 0; i < count; i++) {
@@ -56,8 +56,33 @@ export function initLivestock(settlements, rng) {
   return animals;
 }
 
+const ANIMAL_COLORS = {
+  deer: '#c8a878', rabbit: '#d8c8b0', wolf: '#708090', bear: '#5a4030',
+  cow: '#f0e0c0', chicken: '#ffe8a0', sheep: '#e8e8f0', fox: '#d08040',
+  moose: '#6a5040', lynx: '#a08060', antelope: '#d0b890', hyena: '#908070',
+  jaguar: '#c87830', monkey: '#a07040', caribou: '#b09070',
+};
+
+export function getAnimalColor(type) {
+  return ANIMAL_COLORS[type] || '#90a070';
+}
+
 export function tickAnimals(animals, world, agents, tick) {
   for (const animal of animals) {
+    if (tick % 12 === 0 && animal.category === 'wildlife') {
+      const neighbors = [[0,1],[1,0],[-1,1],[1,-1],[0,-1],[-1,0]].map(([dq,dr]) => ({
+        q: animal.q + dq, r: animal.r + dr,
+      })).filter(n => world.hexMap.has(hexKey(n.q, n.r)));
+      if (neighbors.length && Math.random() < 0.35) {
+        const n = neighbors[Math.floor(Math.random() * neighbors.length)];
+        const hex = world.hexMap.get(hexKey(n.q, n.r));
+        if (hex?.walkable && !hex.settlementId) {
+          animal.q = n.q;
+          animal.r = n.r;
+          animal.hexKey = hexKey(n.q, n.r);
+        }
+      }
+    }
     if (animal.category === 'livestock' && tick % 24 === 0) {
       const settlement = world.settlements.find(s => s.id === animal.settlementId);
       if (settlement) {
