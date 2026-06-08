@@ -179,8 +179,10 @@ export const BUILDING_COLORS = {
   town_center: '#c0a060',
 };
 
-export function drawConstructionSite(ctx, cx, cy, size, type, progress = 0) {
-  const h = size * (0.3 + progress * 0.5);
+export function drawConstructionSite(ctx, cx, cy, hexSize, type, progress = 0) {
+  const scale = FOOTPRINT_SCALE[type] || 1.5;
+  const size = hexSize * scale;
+  const h = size * (0.45 + progress * 0.4);
   ctx.fillStyle = '#6a5040';
   ctx.fillRect(cx - size * 0.35, cy - h, size * 0.7, h);
   ctx.strokeStyle = '#3a2818';
@@ -200,32 +202,105 @@ export function drawConstructionSite(ctx, cx, cy, size, type, progress = 0) {
   ctx.fillText(`${Math.floor(progress * 100)}%`, cx, cy + size * 0.2);
 }
 
-export function drawBuildingIcon(ctx, cx, cy, size, type) {
+const SPRITE_FILES = {
+  home: 'assets/buildings/building_home.png',
+  town_center: 'assets/buildings/building_town_center.png',
+  prison: 'assets/buildings/building_prison.png',
+  market: 'assets/buildings/building_market.png',
+  farm: 'assets/buildings/building_farm.png',
+};
+
+const BUILDING_SPRITES = {};
+let spritesReady = false;
+
+export function loadBuildingSprites() {
+  if (spritesReady) return Promise.resolve();
+  const entries = Object.entries(SPRITE_FILES);
+  return Promise.all(entries.map(([type, path]) => new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => { BUILDING_SPRITES[type] = img; resolve(); };
+    img.onerror = () => resolve();
+    img.src = path;
+  }))).then(() => { spritesReady = true; });
+}
+
+const FOOTPRINT_SCALE = {
+  town_center: 2.6, barracks: 2.4, temple: 2.4, prison: 2.2,
+  market: 2.0, farm: 2.1, guild_hall: 2.0, tavern: 1.7,
+  granary: 1.8, home: 1.6,
+};
+
+/** Draw a building spanning multiple hex tiles */
+export function drawBuildingSprite(ctx, cx, cy, hexSize, type, footprintSize = 1) {
+  const scale = FOOTPRINT_SCALE[type] || 1.5;
+  const w = hexSize * scale * Math.max(1, Math.sqrt(footprintSize));
+  const h = w * 0.85;
+  const x = cx - w / 2;
+  const y = cy - h * 0.92;
+
+  const sprite = BUILDING_SPRITES[type];
+  if (sprite?.complete && sprite.naturalWidth) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = hexSize * 0.25;
+    ctx.shadowOffsetY = hexSize * 0.12;
+    ctx.drawImage(sprite, x, y, w, h);
+    ctx.restore();
+    return;
+  }
+
+  drawBuildingIconLarge(ctx, cx, cy, w, type);
+}
+
+function drawBuildingIconLarge(ctx, cx, cy, w, type) {
   const color = BUILDING_COLORS[type] || '#888';
+  const h = w * 0.75;
+  const x = cx - w / 2;
+  const y = cy - h;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.4)';
+  ctx.shadowBlur = w * 0.08;
+  ctx.shadowOffsetY = w * 0.05;
   ctx.fillStyle = color;
-  ctx.strokeStyle = '#333';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#1a1410';
+  ctx.lineWidth = Math.max(1.5, w * 0.02);
   if (type === 'farm') {
-    ctx.fillRect(cx - size * 0.4, cy, size * 0.8, size * 0.5);
+    ctx.fillRect(x + w * 0.1, cy - h * 0.35, w * 0.55, h * 0.4);
     ctx.beginPath();
-    ctx.moveTo(cx - size * 0.5, cy);
-    ctx.lineTo(cx, cy - size * 0.5);
-    ctx.lineTo(cx + size * 0.5, cy);
+    ctx.moveTo(x + w * 0.05, cy - h * 0.35);
+    ctx.lineTo(x + w * 0.37, cy - h * 0.85);
+    ctx.lineTo(x + w * 0.7, cy - h * 0.35);
     ctx.closePath();
     ctx.fill();
-  } else if (type === 'castle' || type === 'town_center') {
-    ctx.fillRect(cx - size * 0.35, cy - size * 0.1, size * 0.7, size * 0.6);
+    ctx.stroke();
+  } else if (type === 'town_center' || type === 'castle') {
+    ctx.fillRect(x + w * 0.15, cy - h * 0.55, w * 0.7, h * 0.55);
     for (let i = -1; i <= 1; i++) {
-      ctx.fillRect(cx + i * size * 0.25 - size * 0.08, cy - size * 0.45, size * 0.16, size * 0.35);
+      ctx.fillRect(cx + i * w * 0.22 - w * 0.08, cy - h * 0.95, w * 0.16, h * 0.42);
+    }
+    ctx.strokeRect(x + w * 0.15, cy - h * 0.55, w * 0.7, h * 0.55);
+  } else if (type === 'prison') {
+    ctx.fillStyle = '#3a3a48';
+    ctx.fillRect(x + w * 0.1, cy - h * 0.7, w * 0.8, h * 0.7);
+    ctx.strokeStyle = '#1a1a22';
+    ctx.lineWidth = w * 0.03;
+    for (let i = 0; i < 4; i++) {
+      const bx = x + w * 0.18 + i * w * 0.18;
+      ctx.strokeRect(bx, cy - h * 0.55, w * 0.1, h * 0.35);
     }
   } else {
-    ctx.fillRect(cx - size * 0.3, cy - size * 0.2, size * 0.6, size * 0.5);
+    ctx.fillRect(x + w * 0.2, cy - h * 0.45, w * 0.6, h * 0.45);
     ctx.beginPath();
-    ctx.moveTo(cx - size * 0.35, cy - size * 0.2);
-    ctx.lineTo(cx, cy - size * 0.55);
-    ctx.lineTo(cx + size * 0.35, cy - size * 0.2);
+    ctx.moveTo(x + w * 0.15, cy - h * 0.45);
+    ctx.lineTo(cx, cy - h * 0.9);
+    ctx.lineTo(x + w * 0.85, cy - h * 0.45);
     ctx.closePath();
     ctx.fill();
+    ctx.stroke();
   }
-  ctx.strokeRect(cx - size * 0.3, cy - size * 0.2, size * 0.6, size * 0.5);
+  ctx.restore();
+}
+
+export function drawBuildingIcon(ctx, cx, cy, size, type) {
+  drawBuildingSprite(ctx, cx, cy, size * 2.2, type, 1);
 }

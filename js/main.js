@@ -14,7 +14,8 @@ import { divineBless, divineCurse } from './magic.js';
 import { grantSkill } from './skills.js';
 import { saveGame, loadGame, exportSave, deserializeAgent } from './save.js';
 import { PauseMenu } from './pauseMenu.js';
-import { tickConstruction, initSettlementConstruction, planNewBuildings } from './construction.js';
+import { tickConstruction, initSettlementConstruction, planNewBuildings, resolveBuildingAt } from './construction.js';
+import { loadBuildingSprites } from './textures.js';
 import { createWallet } from './currency.js';
 import { initKingdoms, tickKingdoms } from './kingdoms.js';
 import { getBuildingInspectData } from './settlementInfo.js';
@@ -51,6 +52,7 @@ class Game {
     this.init();
     this.setupInput();
     this.setupEvents();
+    loadBuildingSprites();
     window.addEventListener('resize', () => this.renderer.resize());
     requestAnimationFrame(t => this.loop(t));
   }
@@ -110,8 +112,10 @@ class Game {
       if (this.pauseMenu.open) return;
       const world = this.renderer.screenToWorld(e.clientX, e.clientY);
       const hex = pixelToHex(world.x, world.y, this.renderer.hexSize);
-      this.renderer.hoverHex = this.world.hexMap.get(`${hex.q},${hex.r}`) || null;
-      this.hoverAgent = this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
+      const tile = this.world.hexMap.get(`${hex.q},${hex.r}`) || null;
+      this.renderer.hoverHex = tile;
+      this.renderer.hoverBuilding = tile?.building || null;
+      this.hoverAgent = tile?.building ? null : this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
       if (this.dragging) {
         const dx = (e.clientX - this.dragStart.x) / this.renderer.camera.zoom;
         const dy = (e.clientY - this.dragStart.y) / this.renderer.camera.zoom;
@@ -143,14 +147,18 @@ class Game {
           const btn = this.hitDivineButton(e.clientX, e.clientY);
           if (btn) { this.handleDivine(btn); return; }
         }
-        const buildingHit = this.renderer.hitTestBuilding(this.world, e.clientX, e.clientY);
-        if (buildingHit) {
+        const buildingHit = this.renderer.hitTestBuildingHex(this.world, e.clientX, e.clientY);
+        const resolved = buildingHit ? resolveBuildingAt(buildingHit.hex, this.world.hexMap) : null;
+        if (resolved) {
+          const settlement = this.world.settlements.find(s => s.id === resolved.building.settlementId);
           this.inspectBuilding = getBuildingInspectData(
-            this.world, this.agents, buildingHit.settlement, buildingHit.hex
+            this.world, this.agents, settlement, resolved.hex
           );
           this.inspectAgent = null;
           this.renderer.selectedAgent = null;
+          this.renderer.selectedBuilding = resolved.hex;
         } else {
+          this.renderer.selectedBuilding = null;
           const agent = this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
           if (agent) {
             this.inspectAgent = agent;

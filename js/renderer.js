@@ -1,8 +1,9 @@
-import { hexToPixel, hexKey } from './hex.js';
+import { hexToPixel, hexKey, pixelToHex } from './hex.js';
 import {
   getSkyGradient, drawAgentPortrait, RACE_COLORS,
-  drawBuildingIcon, drawConstructionSite, getDayNightOverlay,
+  drawBuildingSprite, drawConstructionSite, getDayNightOverlay,
 } from './textures.js';
+import { getFootprint } from './construction.js';
 import { BIOME_BY_ID } from './biomes.js';
 import { formatWallet } from './currency.js';
 import { getAnimalColor } from './animals.js';
@@ -27,6 +28,8 @@ export class Renderer {
     this.camera = { x: 0, y: 0, zoom: 0.7 };
     this.hoverHex = null;
     this.selectedAgent = null;
+    this.selectedBuilding = null;
+    this.hoverBuilding = null;
     this.terrainCanvas = null;
     this.terrainOrigin = { x: 0, y: 0 };
     this.bakedFor = null;
@@ -145,8 +148,8 @@ export class Renderer {
 
     const size = this.hexSize * zoom;
 
-    // hover hex highlight
-    if (this.hoverHex && !ui?.pauseMenuOpen) {
+    // hover hex highlight (skip when hovering a building — footprint highlight handles that)
+    if (this.hoverHex && !ui?.pauseMenuOpen && !this.hoverBuilding) {
       const p = hexToPixel(this.hoverHex.q, this.hoverHex.r, this.hexSize);
       const s = this.worldToScreen(p.x, p.y);
       this._hexPath(ctx, s.x, s.y, size);
@@ -157,6 +160,7 @@ export class Renderer {
 
     // buildings + construction + dungeons (bounded iteration)
     this._drawStructures(ctx, world, size, w, h);
+    this._drawBuildingHighlight(ctx, world, size, w, h);
 
     // animals (culled)
     if (ui?.animals?.length) this._drawAnimals(ctx, ui.animals, size, w, h);
@@ -202,19 +206,30 @@ export class Renderer {
   }
 
   _drawStructures(ctx, world, size, w, h) {
-    const margin = size * 3;
+    const margin = size * 5;
+    const drawn = new Set();
     for (const s of world.settlements || []) {
       for (const b of s.buildings || []) {
-        const p = hexToPixel(b.hex.q, b.hex.r, this.hexSize);
-        if (!this._onScreen(p.x, p.y, w, h, margin)) continue;
-        const scr = this.worldToScreen(p.x, p.y);
-        drawBuildingIcon(ctx, scr.x, scr.y - size * 0.2, size * 0.62, b.type);
+        const key = `${b.hex.q},${b.hex.r}`;
+        if (drawn.has(key)) continue;
+        const anchorHex = world.hexMap.get(hexKey(b.hex.q, b.hex.r));
+        if (anchorHex?.building?.isAnchor === false) continue;
+        drawn.add(key);
+        const fp = getFootprint(b.type);
+        const center = footprintCenter(b.hex, fp, this.hexSize);
+        if (!this._onScreen(center.x, center.y, w, h, margin)) continue;
+        const scr = this.worldToScreen(center.x, center.y);
+        drawBuildingSprite(ctx, scr.x, scr.y, size, b.type, fp.length);
       }
       for (const site of s.constructionQueue || []) {
-        const p = hexToPixel(site.hex.q, site.hex.r, this.hexSize);
-        if (!this._onScreen(p.x, p.y, w, h, margin)) continue;
-        const scr = this.worldToScreen(p.x, p.y);
-        drawConstructionSite(ctx, scr.x, scr.y, size * 0.7, site.type, site.progress / site.totalTicks);
+        const key = `site_${site.hex.q},${site.hex.r}`;
+        if (drawn.has(key)) continue;
+        drawn.add(key);
+        const fp = getFootprint(site.type);
+        const center = footprintCenter(site.hex, fp, this.hexSize);
+        if (!this._onScreen(center.x, center.y, w, h, margin)) continue;
+        const scr = this.worldToScreen(center.x, center.y);
+        drawConstructionSite(ctx, scr.x, scr.y, size, site.type, site.progress / site.totalTicks);
       }
     }
     for (const d of world.dungeons || []) {
@@ -234,6 +249,26 @@ export class Renderer {
       ctx.fill();
       ctx.stroke();
     }
+  }
+
+  _drawBuildingHighlight(ctx, world, size, w, h) {
+    const target = this.selectedBuilding || (this.hoverBuilding ? this.hoverHex : null);
+    if (!target?.building) return;
+    const type = target.building.type;
+    const anchorQ = target.building.anchorQ ?? target.q;
+    const anchorR = target.building.anchorR ?? target.r;
+    const fp = getFootprint(type);
+    ctx.save();
+    ctx.strokeStyle = ui?.selectedBuilding ? 'rgba(255,225,90,0.95)' : 'rgba(140,200,255,0.75)';
+    ctx.lineWidth = 2.5;
+    for (const [dq, dr] of fp) {
+      const p = hexToPixel(anchorQ + dq, anchorR + dr, this.hexSize);
+      const scr = this.worldToScreen(p.x, p.y);
+      if (!this._onScreen(p.x, p.y, w, h, size * 4)) continue;
+      this._hexPath(ctx, scr.x, scr.y, size * 1.02);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   _drawAnimals(ctx, animals, size, w, h) {
@@ -517,7 +552,7 @@ export class Renderer {
       biome?.name || 'Unknown',
       `Elevation ${(hex.elevation * 100).toFixed(0)}%`,
       hex.waterDepth > 0.3 ? 'Water' : `Moisture ${(hex.moisture * 100).toFixed(0)}%`,
-      hex.building ? `Building: ${hex.building.type}` : '',
+      hex.building ? `Building: ${hex.building.type.replace('_', ' ')} (click to inspect)` : '',
     ].filter(Boolean);
     const ctx = this.ctx;
     const tw = 168, th = 14 + lines.length * 16 + 8;
@@ -671,36 +706,14 @@ export class Renderer {
   }
 
   // ---------- hit tests ----------
-  hitTestBuilding(world, sx, sy) {
-    const size = this.hexSize * this.camera.zoom;
-    const hitR = (size * 0.55) ** 2;
-    let best = null, bestD = Infinity;
-    for (const settlement of world.settlements || []) {
-      for (const b of settlement.buildings || []) {
-        const hex = world.hexMap.get(hexKey(b.hex.q, b.hex.r));
-        if (!hex?.building) continue;
-        const p = hexToPixel(b.hex.q, b.hex.r, this.hexSize);
-        const scr = this.worldToScreen(p.x, p.y);
-        const dx = sx - scr.x, dy = sy - scr.y;
-        const d = dx * dx + dy * dy;
-        if (d < hitR && d < bestD) {
-          bestD = d;
-          best = { settlement, hex, building: hex.building };
-        }
-      }
-      for (const site of settlement.constructionQueue || []) {
-        const p = hexToPixel(site.hex.q, site.hex.r, this.hexSize);
-        const scr = this.worldToScreen(p.x, p.y);
-        const dx = sx - scr.x, dy = sy - scr.y;
-        const d = dx * dx + dy * dy;
-        if (d < hitR && d < bestD) {
-          bestD = d;
-          const hex = world.hexMap.get(hexKey(site.hex.q, site.hex.r));
-          best = { settlement, hex, building: hex?.building || { type: site.type, underConstruction: true } };
-        }
-      }
-    }
-    return best;
+  hitTestBuildingHex(world, sx, sy) {
+    const worldPos = this.screenToWorld(sx, sy);
+    const hexCoord = pixelToHex(worldPos.x, worldPos.y, this.hexSize);
+    const tile = world.hexMap.get(hexKey(hexCoord.q, hexCoord.r));
+    if (!tile?.building) return null;
+    const settlement = world.settlements.find(s => s.id === tile.building.settlementId);
+    if (!settlement) return null;
+    return { settlement, hex: tile, building: tile.building };
   }
 
   hitTestAgent(agents, sx, sy) {
@@ -727,6 +740,17 @@ export class Renderer {
     }
     return -1;
   }
+}
+
+function footprintCenter(anchor, footprint, hexSize) {
+  let sx = 0, sy = 0;
+  for (const [dq, dr] of footprint) {
+    const p = hexToPixel(anchor.q + dq, anchor.r + dr, hexSize);
+    sx += p.x;
+    sy += p.y;
+  }
+  const n = footprint.length || 1;
+  return { x: sx / n, y: sy / n };
 }
 
 // ---------- shared draw helpers ----------

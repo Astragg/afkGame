@@ -2,21 +2,91 @@ import { hexKey } from './hex.js';
 import { addJobSlots } from './worldgen.js';
 import { payFromWallet } from './currency.js';
 
-export const BUILDING_DEFS = {
-  home:       { ticks: 72,  cost: { silver: 80,  copper: 0 },   capacity: 2, label: 'Home' },
-  farm:       { ticks: 96,  cost: { silver: 120, copper: 0 },   capacity: 0, label: 'Farm' },
-  market:     { ticks: 120, cost: { silver: 200, copper: 0 },   capacity: 0, label: 'Market' },
-  tavern:     { ticks: 96,  cost: { silver: 150, copper: 0 },   capacity: 0, label: 'Tavern' },
-  barracks:   { ticks: 168, cost: { silver: 250, copper: 0 },   capacity: 0, label: 'Barracks' },
-  temple:     { ticks: 200, cost: { silver: 300, gems: 1 },     capacity: 0, label: 'Temple' },
-  prison:     { ticks: 144, cost: { silver: 180, copper: 0 },   capacity: 12, label: 'Prison' },
-  guild_hall: { ticks: 180, cost: { silver: 220, tokens: 2 },   capacity: 0, label: 'Guild Hall' },
-  granary:    { ticks: 108, cost: { silver: 100, copper: 0 },   capacity: 0, label: 'Granary' },
+/** Axial offsets from anchor hex — buildings span multiple tiles */
+export const BUILDING_FOOTPRINTS = {
+  town_center: [[0, 0], [1, 0], [0, -1], [1, -1]],
+  barracks:    [[0, 0], [1, 0], [0, -1], [1, -1]],
+  temple:      [[0, 0], [1, 0], [-1, 1], [0, -1]],
+  prison:      [[0, 0], [1, 0], [1, -1], [0, -1]],
+  market:      [[0, 0], [1, -1], [-1, 0]],
+  farm:        [[0, 0], [1, 0], [0, -1]],
+  guild_hall:  [[0, 0], [1, 0], [0, -1]],
+  tavern:      [[0, 0], [1, -1]],
+  granary:     [[0, 0], [1, 0]],
+  home:        [[0, 0]],
 };
 
-export function queueConstruction(settlement, hex, type, tick) {
+export const BUILDING_DEFS = {
+  home:       { ticks: 72,  cost: { silver: 80,  copper: 0 },   capacity: 2, label: 'Home', footprint: 'home' },
+  farm:       { ticks: 96,  cost: { silver: 120, copper: 0 },   capacity: 0, label: 'Farm', footprint: 'farm' },
+  market:     { ticks: 120, cost: { silver: 200, copper: 0 },   capacity: 0, label: 'Market', footprint: 'market' },
+  tavern:     { ticks: 96,  cost: { silver: 150, copper: 0 },   capacity: 0, label: 'Tavern', footprint: 'tavern' },
+  barracks:   { ticks: 168, cost: { silver: 250, copper: 0 },   capacity: 0, label: 'Barracks', footprint: 'barracks' },
+  temple:     { ticks: 200, cost: { silver: 300, gems: 1 },     capacity: 0, label: 'Temple', footprint: 'temple' },
+  prison:     { ticks: 144, cost: { silver: 180, copper: 0 },   capacity: 12, label: 'Prison', footprint: 'prison' },
+  guild_hall: { ticks: 180, cost: { silver: 220, tokens: 2 },   capacity: 0, label: 'Guild Hall', footprint: 'guild_hall' },
+  granary:    { ticks: 108, cost: { silver: 100, copper: 0 },   capacity: 0, label: 'Granary', footprint: 'granary' },
+  town_center:{ ticks: 0,   cost: {}, capacity: 0, label: 'Town Center', footprint: 'town_center' },
+};
+
+export function getFootprint(type) {
+  return BUILDING_FOOTPRINTS[type] || BUILDING_FOOTPRINTS.home;
+}
+
+export function footprintFits(anchor, type, hexMap, settlementId) {
+  for (const [dq, dr] of getFootprint(type)) {
+    const hex = hexMap.get(hexKey(anchor.q + dq, anchor.r + dr));
+    if (!hex?.walkable || hex.dungeon) return false;
+    if (hex.building && !hex.building.underConstruction) return false;
+    if (hex.settlementId && hex.settlementId !== settlementId) return false;
+  }
+  return true;
+}
+
+export function findFootprintSite(settlement, type, hexMap) {
+  const candidates = [...hexMap.values()].filter(h =>
+    h.settlementId === settlement.id && h.walkable && !h.dungeon && !h.building
+  );
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  for (const hex of candidates) {
+    if (footprintFits(hex, type, hexMap, settlement.id)) return hex;
+  }
+  return null;
+}
+
+function applyFootprint(anchorHex, type, settlementId, buildingData, hexMap) {
+  const footprint = getFootprint(type);
+  for (const [dq, dr] of footprint) {
+    const tile = hexMap.get(hexKey(anchorHex.q + dq, anchorHex.r + dr));
+    if (!tile) continue;
+    const isAnchor = dq === 0 && dr === 0;
+    tile.building = {
+      ...buildingData,
+      isAnchor,
+      anchorQ: anchorHex.q,
+      anchorR: anchorHex.r,
+    };
+    if (!tile.settlementId) tile.settlementId = settlementId;
+  }
+}
+
+export function resolveBuildingAt(hex, hexMap) {
+  if (!hex?.building) return null;
+  const b = hex.building;
+  if (b.isAnchor === false && b.anchorQ != null) {
+    const anchor = hexMap.get(hexKey(b.anchorQ, b.anchorR));
+    if (anchor?.building) return { hex: anchor, building: anchor.building };
+  }
+  return { hex, building: b };
+}
+
+export function queueConstruction(settlement, hex, type, tick, hexMap) {
   const def = BUILDING_DEFS[type];
-  if (!def) return false;
+  if (!def || !hexMap) return false;
+  if (!footprintFits(hex, type, hexMap, settlement.id)) return false;
   const treasury = settlement.treasuryWallet || { gold: 0, silver: settlement.treasury || 0, copper: 0, gems: 0, tokens: 0 };
   for (const [cur, amt] of Object.entries(def.cost)) {
     if ((treasury[cur] || 0) < amt) return false;
@@ -36,7 +106,10 @@ export function queueConstruction(settlement, hex, type, tick) {
   };
   settlement.constructionQueue = settlement.constructionQueue || [];
   settlement.constructionQueue.push(site);
-  hex.building = { type, settlementId: settlement.id, underConstruction: true, siteId: site.id, progress: 0 };
+  if (!hexMap) return false;
+  applyFootprint(hex, type, settlement.id, {
+    type, settlementId: settlement.id, underConstruction: true, siteId: site.id, progress: 0,
+  }, hexMap);
   return site;
 }
 
@@ -64,7 +137,11 @@ export function tickConstruction(world, agents, tick) {
       );
       const workPower = 1 + nearby.length * 0.5;
       site.progress += workPower;
-      if (hex.building) hex.building.progress = site.progress / site.totalTicks;
+      const prog = site.progress / site.totalTicks;
+      for (const [dq, dr] of getFootprint(site.type)) {
+        const t = world.hexMap.get(hexKey(site.hex.q + dq, site.hex.r + dr));
+        if (t?.building) t.building.progress = prog;
+      }
 
       if (site.progress >= site.totalTicks) {
         completeConstruction(settlement, site, hex, world);
@@ -76,7 +153,7 @@ export function tickConstruction(world, agents, tick) {
 
 function completeConstruction(settlement, site, hex, world) {
   const def = BUILDING_DEFS[site.type];
-  hex.building = {
+  const buildingData = {
     type: site.type,
     settlementId: settlement.id,
     capacity: def?.capacity || 0,
@@ -84,8 +161,10 @@ function completeConstruction(settlement, site, hex, world) {
     hexQ: site.hex.q,
     hexR: site.hex.r,
     completedTick: site.startedTick + site.totalTicks,
+    completed: true,
   };
-  settlement.buildings.push({ type: site.type, hex: { ...site.hex }, completed: true });
+  applyFootprint(hex, site.type, settlement.id, buildingData, world.hexMap);
+  settlement.buildings.push({ type: site.type, hex: { ...site.hex }, completed: true, footprint: site.type });
   addJobSlots(settlement, site.type);
   if (site.type === 'home' && world._agents) autoAssignHomeless(settlement, world, world._agents);
 }
@@ -157,8 +236,10 @@ export function initSettlementConstruction(hexMap, settlements, rng, tick = 0) {
     };
     const center = hexMap.get(hexKey(settlement.hex.q, settlement.hex.r));
     if (center) {
-      center.building = { type: 'town_center', settlementId: settlement.id, completed: true };
-      settlement.buildings.push({ type: 'town_center', hex: { ...settlement.hex }, completed: true });
+      applyFootprint(center, 'town_center', settlement.id, {
+        type: 'town_center', settlementId: settlement.id, completed: true, capacity: 0,
+      }, hexMap);
+      settlement.buildings.push({ type: 'town_center', hex: { ...settlement.hex }, completed: true, footprint: 'town_center' });
     }
 
     const candidates = [];
@@ -180,7 +261,7 @@ export function initSettlementConstruction(hexMap, settlements, rng, tick = 0) {
     const types = rng.shuffle([...plans]).slice(0, toBuild.length);
     toBuild.forEach((hex, i) => {
       const type = types[i] || 'home';
-      queueConstruction(settlement, hex, type, tick);
+      queueConstruction(settlement, hex, type, tick, hexMap);
       siteProgressBoost(settlement, hex, rng);
     });
   }
@@ -196,14 +277,14 @@ export function planNewBuildings(world, rng, tick) {
   for (const settlement of world.settlements) {
     const homeless = settlement.population - countHomed(settlement, world);
     if (homeless > 2) {
-      const hex = findEmptySettlementHex(settlement, world.hexMap);
-      if (hex && queueConstruction(settlement, hex, 'home', tick)) {
+      const hex = findFootprintSite(settlement, 'home', world.hexMap);
+      if (hex && queueConstruction(settlement, hex, 'home', tick, world.hexMap)) {
         hex.settlementId = settlement.id;
       }
     }
     if (settlement.population > 15 && !settlement.buildings.some(b => b.type === 'market')) {
-      const hex = findEmptySettlementHex(settlement, world.hexMap);
-      if (hex) { hex.settlementId = settlement.id; queueConstruction(settlement, hex, 'market', tick); }
+      const hex = findFootprintSite(settlement, 'market', world.hexMap);
+      if (hex) queueConstruction(settlement, hex, 'market', tick, world.hexMap);
     }
   }
 }
