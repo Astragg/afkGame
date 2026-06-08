@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aetherworld</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; }
+    #game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+    #help {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      color: #8090b0;
+      font: 11px/1.5 "Segoe UI", system-ui, sans-serif;
+      pointer-events: none;
+      background: rgba(10,14,30,0.7);
+      padding: 8px 12px;
+      border-radius: 6px;
+      max-width: 420px;
+    }
+    #help kbd {
+      background: #2a3450;
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: #c0d0f0;
+    }
+  </style>
+</head>
+<body>
+  <div id="file-warning" hidden style="
+    position:fixed; inset:0; z-index:9999; align-items:center; justify-content:center;
+    background:#0a0e1a; color:#e2ebff; font:16px/1.6 'Segoe UI', system-ui, sans-serif; padding:32px;
+  ">
+    <div style="max-width:560px; background:rgba(18,22,38,0.98); border:2px solid #6a88c0; border-radius:12px; padding:28px;">
+      <h1 id="warn-title" style="font-size:22px; margin-bottom:12px;">Can't run from this link</h1>
+      <div id="warn-body" style="color:#94a8cc;"></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const panel = document.getElementById('file-warning');
+      const title = document.getElementById('warn-title');
+      const body = document.getElementById('warn-body');
+
+      function showWarning(heading, html) {
+        title.textContent = heading;
+        body.innerHTML = html;
+        panel.hidden = false;
+        panel.style.display = 'flex';
+      }
+
+      if (location.protocol === 'file:') {
+        showWarning('You opened the local file', `
+          <p style="margin-bottom:14px;">
+            Uploading to GitHub is <strong>not</strong> enough if you still double-click
+            <code>index.html</code> on your PC. Browsers block the game on <code>file://</code> links.
+          </p>
+          <p style="margin-bottom:8px;"><strong>Option A — GitHub Pages (play in browser):</strong></p>
+          <ol style="margin:0 0 14px 20px; line-height:1.7;">
+            <li>On GitHub: <strong>Settings → Pages → Deploy from branch <code>main</code> / root</strong></li>
+            <li>Wait ~1 minute</li>
+            <li>Open <code>https://&lt;your-username&gt;.github.io/&lt;repo-name&gt;/</code></li>
+          </ol>
+          <p style="margin-bottom:8px;"><strong>Option B — play locally:</strong></p>
+          <p style="margin-bottom:0;">Double-click <code>play.bat</code> in this folder, then use <code>http://localhost:3456</code></p>
+        `);
+      } else if (location.hostname === 'github.com') {
+        showWarning('Wrong GitHub link', `
+          <p style="margin-bottom:14px;">
+            You're viewing the source file on github.com — that is not the live game.
+          </p>
+          <p style="margin-bottom:8px;"><strong>Enable GitHub Pages:</strong></p>
+          <p style="margin-bottom:14px;">Settings → Pages → branch <code>main</code> → folder <code>/ (root)</code></p>
+          <p style="margin-bottom:0;">Then open <code>https://&lt;your-username&gt;.github.io/&lt;repo-name&gt;/</code></p>
+        `);
+      }
+    })();
+  </script>
+  <canvas id="game"></canvas>
+  <div id="help">
+    <strong>Aetherworld</strong> — Divine life simulation<br>
+    <kbd>Click</kbd> agent to inspect &nbsp; <kbd>Scroll</kbd> zoom &nbsp;
+    <kbd>Shift+drag</kbd> or <kbd>Middle-drag</kbd> pan &nbsp; <kbd>Space</kbd>/<kbd>Tab</kbd> World Almanac &nbsp; <kbd>Esc</kbd> close<br>
+    Speed bar: ⏸ opens Almanac (rankings, families, rulers) · 0.25x–8x · step &nbsp;
+    <kbd>Ctrl+S</kbd> save &nbsp; <kbd>Ctrl+E</kbd> export
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

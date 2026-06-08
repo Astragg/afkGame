@@ -1,0 +1,231 @@
+import { BIOME_BY_ID } from './biomes.js';
+
+/** Procedural color palettes — darker green = higher elevation */
+const BIOME_COLORS = {
+  0:  ['#0a1628', '#0d2040'],           // Deep Ocean
+  1:  ['#1a4a6e', '#2a6a8e'],           // Shallow Sea
+  2:  ['#e8d4a8', '#d4c090'],           // Beach
+  3:  ['#3a7ab8', '#4a9ad0'],           // River
+  4:  ['#4a6a4a', '#3a5a3a'],           // Marsh
+  5:  ['#7ec850', '#9ed870'],           // Grassland
+  6:  ['#c4a050', '#d4b060'],           // Savanna
+  7:  ['#3a7a30', '#4a9a40'],           // Forest
+  8:  ['#1a5a18', '#2a7a28'],           // Dense Forest
+  9:  ['#2a5a40', '#3a7a58'],           // Taiga
+  10: ['#b0c8c0', '#90a8a0'],           // Tundra
+  11: ['#e8f0f8', '#d0e0f0'],           // Snow
+  12: ['#d4b878', '#c4a868'],           // Desert
+  13: ['#e8c878', '#d8b868'],           // Dunes
+  14: ['#a07050', '#907040'],           // Badlands
+  15: ['#4a2020', '#6a3030'],           // Volcanic
+  16: ['#4a8a38', '#3a7a28'],           // Highlands (darker green)
+  17: ['#90d860', '#a0e870'],           // Meadow
+  18: ['#2a4a30', '#1a3a20'],           // Swamp
+  19: ['#1a6a28', '#2a8a38'],           // Jungle
+  20: ['#6a4a8a', '#8a6aaa'],           // Crystal Cavern
+  21: ['#3a2840', '#2a1830'],           // Corrupted
+};
+
+function hexToRgb(hex) {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+function mix(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/** Procedural terrain color with elevation shading and per-tile variation. No day/night. */
+export function getBaseHexColor(hex) {
+  const biome = BIOME_BY_ID[hex.biomeId];
+  const pair = BIOME_COLORS[hex.biomeId] || ['#888888', '#666666'];
+  let rgb;
+
+  if (hex.waterDepth > 0.05 || biome?.water) {
+    // water: deeper = darker blue
+    const depth = Math.min(1, Math.max(0.1, hex.waterDepth));
+    rgb = [
+      Math.floor(18 + (1 - depth) * 45),
+      Math.floor(55 + (1 - depth) * 75),
+      Math.floor(95 + depth * 70),
+    ];
+  } else {
+    // land: blend the two palette tones by elevation, then shade by height
+    const lo = hexToRgb(pair[1]);
+    const hi = hexToRgb(pair[0]);
+    const t = Math.min(1, Math.max(0, (hex.elevation - 0.36) / 0.5));
+    rgb = mix(lo, hi, t);
+    // darker at higher elevation for relief; lighter near coast
+    const shade = 1 - t * 0.22;
+    rgb = rgb.map(v => v * shade);
+  }
+
+  // subtle deterministic per-tile variation so terrain isn't flat
+  const jitter = (((hex.q * 73856093) ^ (hex.r * 19349663)) >>> 0) % 17 / 17 - 0.5;
+  const vf = 1 + jitter * 0.06;
+  return `rgb(${clampByte(rgb[0] * vf)},${clampByte(rgb[1] * vf)},${clampByte(rgb[2] * vf)})`;
+}
+
+function clampByte(v) {
+  return Math.max(0, Math.min(255, Math.floor(v)));
+}
+
+export function getHexColor(hex, timeOfDay = 12) {
+  const base = hex.baseColor || getBaseHexColor(hex);
+  return adjustBrightness(base, getDayNightFactor(timeOfDay));
+}
+
+export function getDayNightOverlay(timeOfDay) {
+  const f = getDayNightFactor(timeOfDay);
+  if (f >= 0.98) return null;
+  // tint toward deep blue at night, warm at dawn/dusk
+  let tint = '8,14,36';
+  if ((timeOfDay >= 5 && timeOfDay < 7) || (timeOfDay >= 17 && timeOfDay < 20)) tint = '40,18,30';
+  return `rgba(${tint},${(1 - f) * 0.82})`;
+}
+
+function getDayNightFactor(hour) {
+  if (hour >= 6 && hour <= 18) {
+    const midday = 12;
+    const dist = Math.abs(hour - midday) / 6;
+    return 0.85 + (1 - dist) * 0.15;
+  }
+  const nightHour = hour < 6 ? hour + 24 : hour;
+  const darkness = hour < 6 ? (6 - hour) / 6 : (hour - 18) / 6;
+  return 0.35 + (1 - darkness) * 0.2;
+}
+
+function adjustBrightness(color, factor) {
+  if (color.startsWith('rgb')) {
+    const m = color.match(/\d+/g);
+    if (!m) return color;
+    return `rgb(${m.map(v => Math.floor(+v * factor)).join(',')})`;
+  }
+  if (color.startsWith('#')) {
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    return `rgb(${Math.floor(r * factor)},${Math.floor(g * factor)},${Math.floor(b * factor)})`;
+  }
+  return color;
+}
+
+export function getSkyGradient(timeOfDay) {
+  const hour = timeOfDay;
+  if (hour >= 5 && hour < 7) return ['#1a1040', '#ff8860', '#ffd080'];
+  if (hour >= 7 && hour < 17) return ['#4080d0', '#80b8f0', '#c0e0ff'];
+  if (hour >= 17 && hour < 20) return ['#1a2040', '#c06040', '#f0a060'];
+  return ['#0a0820', '#101830', '#1a2040'];
+}
+
+export function drawAgentPortrait(ctx, x, y, size, agent) {
+  const seed = agent.portraitSeed || 0;
+  const skinTones = ['#f5d0a8', '#e8b888', '#c89868', '#a07050', '#705030'];
+  const hairColors = ['#2a1810', '#8a5030', '#d0a040', '#f0e0c0', '#601818', '#304080'];
+  const skin = skinTones[seed % skinTones.length];
+  const hair = hairColors[(seed >> 3) % hairColors.length];
+  const eyeStyle = seed % 3;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fillStyle = skin;
+  ctx.fill();
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(x, y - size * 0.55, size * 0.85, Math.PI, 0);
+  ctx.fillStyle = hair;
+  ctx.fill();
+
+  const eyeY = y - size * 0.1;
+  const eyeOff = size * 0.25;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(x - eyeOff, eyeY, size * 0.18, size * 0.22, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + eyeOff, eyeY, size * 0.18, size * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const pupilColors = ['#4060a0', '#308040', '#804040'];
+  ctx.fillStyle = pupilColors[eyeStyle];
+  for (const ex of [x - eyeOff, x + eyeOff]) {
+    ctx.beginPath();
+    ctx.arc(ex, eyeY, size * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+export const RACE_COLORS = {
+  Human: '#e8c878',
+  Goblin: '#70a848',
+  Orc: '#5a8040',
+  Elf: '#88c8a8',
+  Dwarf: '#c89060',
+};
+
+export const BUILDING_COLORS = {
+  home: '#a07050',
+  farm: '#60a040',
+  market: '#d0a040',
+  tavern: '#904030',
+  barracks: '#606878',
+  prison: '#484848',
+  guild_hall: '#6848a0',
+  temple: '#d0c080',
+  castle: '#888898',
+  town_center: '#c0a060',
+};
+
+export function drawConstructionSite(ctx, cx, cy, size, type, progress = 0) {
+  const h = size * (0.3 + progress * 0.5);
+  ctx.fillStyle = '#6a5040';
+  ctx.fillRect(cx - size * 0.35, cy - h, size * 0.7, h);
+  ctx.strokeStyle = '#3a2818';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - size * 0.35, cy - h, size * 0.7, h);
+  ctx.strokeStyle = '#8a7858';
+  for (let i = 0; i < 3; i++) {
+    const ly = cy - h + i * (h / 3);
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.4, ly);
+    ctx.lineTo(cx + size * 0.4, ly);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#c0a060';
+  ctx.font = `${Math.max(7, size * 0.28)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`${Math.floor(progress * 100)}%`, cx, cy + size * 0.2);
+}
+
+export function drawBuildingIcon(ctx, cx, cy, size, type) {
+  const color = BUILDING_COLORS[type] || '#888';
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  if (type === 'farm') {
+    ctx.fillRect(cx - size * 0.4, cy, size * 0.8, size * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.5, cy);
+    ctx.lineTo(cx, cy - size * 0.5);
+    ctx.lineTo(cx + size * 0.5, cy);
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === 'castle' || type === 'town_center') {
+    ctx.fillRect(cx - size * 0.35, cy - size * 0.1, size * 0.7, size * 0.6);
+    for (let i = -1; i <= 1; i++) {
+      ctx.fillRect(cx + i * size * 0.25 - size * 0.08, cy - size * 0.45, size * 0.16, size * 0.35);
+    }
+  } else {
+    ctx.fillRect(cx - size * 0.3, cy - size * 0.2, size * 0.6, size * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.35, cy - size * 0.2);
+    ctx.lineTo(cx, cy - size * 0.55);
+    ctx.lineTo(cx + size * 0.35, cy - size * 0.2);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.strokeRect(cx - size * 0.3, cy - size * 0.2, size * 0.6, size * 0.5);
+}
