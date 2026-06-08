@@ -12,6 +12,11 @@ export function saveGame(state) {
     settlements: state.world.settlements,
     guilds: state.guilds,
     crownedId: state.crownedId,
+    milestones: state.milestones,
+    dynasties: state.dynasties,
+    chronicle: state.chronicle,
+    worldAge: state.worldAge,
+    worldAgeName: state.worldAgeName,
   };
   const json = JSON.stringify(data);
   localStorage.setItem(SAVE_KEY, json);
@@ -26,6 +31,10 @@ export function loadGame() {
   } catch {
     return null;
   }
+}
+
+export function clearSave() {
+  localStorage.removeItem(SAVE_KEY);
 }
 
 export function exportSave(state) {

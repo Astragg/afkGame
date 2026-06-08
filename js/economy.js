@@ -3,17 +3,50 @@ import { creditWallet, payFromWallet, formatWallet, walletTotal } from './curren
 import { addSkillXP, RACE_SKILL_DEPTH } from './skills.js';
 
 export const JOB_TYPES = {
-  farmer: { wage: 12, skill: 'survival.farm', produces: 'food' },
-  fisher: { wage: 10, skill: 'survival.fish', produces: 'food' },
-  guard: { wage: 18, skill: 'combat.melee', produces: null },
-  blacksmith: { wage: 22, skill: 'craft.smith', produces: 'tools' },
-  merchant: { wage: 16, skill: 'leadership.trade', produces: 'goods' },
-  clerk: { wage: 8, skill: 'leadership.persuade', produces: null },
-  mage: { wage: 25, skill: 'magic.elemental', produces: 'reagents' },
-  priest: { wage: 14, skill: 'magic.healing', produces: null },
-  thief: { wage: 0, skill: 'crime.stealth', produces: null },
-  adventurer: { wage: 8, skill: 'combat.tactics', produces: 'loot' },
-  noble: { wage: 35, skill: 'leadership.govern', produces: null },
+  // Food & survival
+  farmer:      { wage: 12, skill: 'survival.farm',     produces: 'food',     desc: 'Works the fields' },
+  fisher:      { wage: 10, skill: 'survival.fish',     produces: 'food',     desc: 'Fishes rivers & sea' },
+  hunter:      { wage: 11, skill: 'survival.hunt',     produces: 'food',     desc: 'Hunts wildlife' },
+  herbalist:   { wage: 13, skill: 'survival.forage',   produces: 'medicine', desc: 'Gathers healing plants' },
+  shepherd:    { wage: 10, skill: 'survival.farm',     produces: 'food',     desc: 'Tends livestock' },
+  // Crafts
+  blacksmith:  { wage: 22, skill: 'craft.smith',       produces: 'tools',    desc: 'Forges weapons & tools' },
+  carpenter:   { wage: 18, skill: 'craft.build',       produces: 'timber',   desc: 'Crafts wood structures' },
+  stonemason:  { wage: 20, skill: 'craft.build',       produces: 'stone',    desc: 'Shapes stone for construction' },
+  baker:       { wage: 12, skill: 'craft.brew',        produces: 'food',     desc: 'Converts grain into food' },
+  brewer:      { wage: 15, skill: 'craft.brew',        produces: 'ale',      desc: 'Brews ale, raises morale' },
+  alchemist:   { wage: 28, skill: 'craft.enchant',     produces: 'potions',  desc: 'Crafts potions & reagents' },
+  lumberjack:  { wage: 14, skill: 'survival.forage',   produces: 'timber',   desc: 'Fells trees for building' },
+  miner:       { wage: 18, skill: 'craft.smith',       produces: 'ore',      desc: 'Extracts metals & gems' },
+  // Commerce & admin
+  merchant:    { wage: 16, skill: 'leadership.trade',  produces: 'goods',    desc: 'Trades between settlements' },
+  clerk:       { wage: 8,  skill: 'leadership.persuade', produces: null,     desc: 'Administrative work' },
+  taxcollector:{ wage: 14, skill: 'leadership.govern', produces: 'silver',   desc: 'Collects taxes from residents' },
+  innkeeper:   { wage: 14, skill: 'leadership.persuade', produces: null,     desc: 'Runs the tavern' },
+  courier:     { wage: 10, skill: 'leadership.trade',  produces: null,       desc: 'Delivers messages & goods' },
+  bard:        { wage: 11, skill: 'leadership.persuade', produces: null,     desc: 'Entertains the populace' },
+  // Military & order
+  guard:       { wage: 18, skill: 'combat.melee',      produces: null,       desc: 'Keeps the peace' },
+  watchman:    { wage: 12, skill: 'combat.melee',      produces: null,       desc: 'Patrols the streets' },
+  warlord:     { wage: 32, skill: 'combat.tactics',    produces: null,       desc: 'Commands military forces' },
+  ranger:      { wage: 16, skill: 'combat.archery',    produces: 'food',     desc: 'Scouts territory & hunts' },
+  executioner: { wage: 15, skill: 'combat.melee',      produces: null,       desc: 'Carries out sentences' },
+  // Magic & knowledge
+  mage:        { wage: 25, skill: 'magic.elemental',   produces: 'reagents', desc: 'Wields elemental magic' },
+  priest:      { wage: 14, skill: 'magic.healing',     produces: null,       desc: 'Heals and blesses' },
+  enchanter:   { wage: 30, skill: 'magic.enchant',     produces: 'artifacts',desc: 'Enchants items & weapons' },
+  scholar:     { wage: 18, skill: 'leadership.govern', produces: null,       desc: 'Researches and records' },
+  chronicler:  { wage: 12, skill: 'leadership.persuade', produces: null,     desc: 'Records history' },
+  healer:      { wage: 16, skill: 'magic.healing',     produces: null,       desc: 'Tends the sick & wounded' },
+  // Crime & shadow
+  thief:       { wage: 0,  skill: 'crime.stealth',     produces: null,       desc: 'Steals from the wealthy' },
+  spy:         { wage: 0,  skill: 'crime.stealth',     produces: null,       desc: 'Gathers intelligence' },
+  assassin:    { wage: 0,  skill: 'crime.assassinate', produces: null,       desc: 'Takes contracts on lives' },
+  // Leadership
+  noble:       { wage: 35, skill: 'leadership.govern', produces: null,       desc: 'Rules and governs' },
+  diplomat:    { wage: 24, skill: 'leadership.command', produces: null,      desc: 'Negotiates with kingdoms' },
+  adventurer:  { wage: 8,  skill: 'combat.tactics',    produces: 'loot',     desc: 'Explores dungeons' },
+  architect:   { wage: 26, skill: 'craft.build',       produces: null,       desc: 'Designs & oversees buildings' },
 };
 
 export function tickEconomy(world, agents, bus, tick, season) {
@@ -56,54 +89,180 @@ function tickSettlementEconomy(settlement, agents, world, bus, tick, season) {
         creditWallet(worker.wallet, wage);
         worker.addEvent(tick, `Earned ${wage}s as ${jobDef.type}`);
       }
-      if (jobDef.type === 'farmer' && tick % 24 === 0) {
-        const yield_ = Math.floor((8 + (worker.skills?.['survival.farm'] || 0) * 2) * foodMult);
-        settlement.foodStore += yield_;
-        worker.addEvent(tick, `Harvested ${yield_} food`);
+      const t = jobDef.type;
+      // Food production
+      if (t === 'farmer' && tick % 24 === 0) {
+        const y = Math.floor((8 + (worker.skills?.['survival.farm'] || 0) * 2) * foodMult);
+        settlement.foodStore += y;
         addSkillXP(worker, 'survival', 'farm', 10);
       }
-      if (jobDef.type === 'fisher' && tick % 12 === 0) {
-        const yield_ = 5 + (worker.skills?.['survival.fish'] || 0);
-        settlement.foodStore += yield_;
-        worker.inventory.push({ type: 'fish', qty: 1 });
+      if (t === 'fisher' && tick % 12 === 0) {
+        settlement.foodStore += 5 + (worker.skills?.['survival.fish'] || 0);
+        addSkillXP(worker, 'survival', 'fish', 8);
       }
-      if (jobDef.type === 'merchant' && tick % 48 === 0) {
+      if (t === 'hunter' && tick % 18 === 0) {
+        const y = Math.floor((4 + (worker.skills?.['survival.hunt'] || 0)) * foodMult * 0.8);
+        settlement.foodStore += y;
+        addSkillXP(worker, 'survival', 'hunt', 10);
+        addSkillXP(worker, 'combat', 'archery', 5);
+      }
+      if (t === 'shepherd' && tick % 24 === 0) {
+        settlement.foodStore += Math.floor(3 * foodMult);
+        addSkillXP(worker, 'survival', 'farm', 6);
+      }
+      if (t === 'baker' && tick % 24 === 0 && (settlement.foodStore || 0) > 10) {
+        settlement.foodStore += Math.floor(3 * foodMult); // efficiency gain
+        addSkillXP(worker, 'craft', 'brew', 8);
+      }
+      if (t === 'herbalist' && tick % 36 === 0) {
+        addSkillXP(worker, 'survival', 'forage', 10);
+        addSkillXP(worker, 'magic', 'healing', 6);
+        // passive healing bonus for settlement
+        for (const r of residents.filter(a => a.health < 80).slice(0, 2)) {
+          r.health = Math.min(100, r.health + 6);
+        }
+      }
+      if (t === 'healer' && tick % 24 === 0) {
+        addSkillXP(worker, 'magic', 'healing', 12);
+        for (const r of residents.filter(a => a.health < 90).slice(0, 3)) {
+          r.health = Math.min(100, r.health + 8);
+        }
+      }
+      if (t === 'brewer' && tick % 48 === 0) {
+        addSkillXP(worker, 'craft', 'brew', 10);
+        // ale boosts social needs
+        for (const r of residents.slice(0, 4)) r.needs.social = Math.min(100, (r.needs.social || 60) + 10);
+        for (const r of residents.slice(0, 4)) r.needs.fun = Math.min(100, (r.needs.fun || 60) + 8);
+      }
+      if (t === 'lumberjack' && tick % 24 === 0) {
+        addSkillXP(worker, 'survival', 'forage', 8);
+        creditWallet(treasury, 4);
+      }
+      if (t === 'miner' && tick % 36 === 0) {
+        addSkillXP(worker, 'craft', 'smith', 8);
+        if (Math.random() < 0.15) treasury.gems = (treasury.gems || 0) + 1;
+        creditWallet(treasury, 6);
+      }
+      if (t === 'merchant' && tick % 48 === 0) {
         tradeBetweenSettlements(world, settlement, bus, tick);
         if (Math.random() < 0.3) creditWallet(worker.wallet, 5 + Math.floor(Math.random() * 10));
+        addSkillXP(worker, 'leadership', 'trade', 10);
       }
-      if (jobDef.type === 'blacksmith' && tick % 36 === 0) {
+      if (t === 'taxcollector' && tick % 24 === 0) {
+        const bonus = Math.floor(settlement.population * 0.5);
+        creditWallet(treasury, bonus);
+        addSkillXP(worker, 'leadership', 'govern', 8);
+      }
+      if (t === 'innkeeper' && tick % 36 === 0) {
+        addSkillXP(worker, 'leadership', 'persuade', 8);
+        for (const r of residents.slice(0, 5)) r.needs.rest = Math.min(100, (r.needs.rest || 70) + 5);
+      }
+      if (t === 'bard' && tick % 36 === 0) {
+        addSkillXP(worker, 'leadership', 'persuade', 10);
+        for (const r of residents.slice(0, 6)) {
+          r.needs.fun = Math.min(100, (r.needs.fun || 60) + 12);
+          r.needs.social = Math.min(100, (r.needs.social || 60) + 8);
+        }
+      }
+      if (t === 'courier' && tick % 36 === 0) {
+        addSkillXP(worker, 'leadership', 'trade', 6);
+        creditWallet(treasury, 3);
+      }
+      if (t === 'blacksmith' && tick % 36 === 0) {
         creditWallet(treasury, 8);
         worker.inventory.push({ type: 'tools', qty: 1 });
+        addSkillXP(worker, 'craft', 'smith', 12);
       }
-      if (jobDef.type === 'mage' && tick % 48 === 0) {
+      if (t === 'carpenter' && tick % 36 === 0) {
+        addSkillXP(worker, 'craft', 'build', 10);
+        creditWallet(treasury, 5);
+      }
+      if (t === 'stonemason' && tick % 36 === 0) {
+        addSkillXP(worker, 'craft', 'build', 12);
+        creditWallet(treasury, 6);
+      }
+      if (t === 'architect' && tick % 48 === 0) {
+        addSkillXP(worker, 'craft', 'build', 14);
+        addSkillXP(worker, 'leadership', 'govern', 6);
+        // Speed up construction
+        for (const site of settlement.constructionQueue || []) {
+          site.progress = Math.min(site.totalTicks, site.progress + 2);
+        }
+      }
+      if (t === 'alchemist' && tick % 48 === 0) {
+        treasury.gems = (treasury.gems || 0) + 1;
+        addSkillXP(worker, 'craft', 'enchant', 12);
+        addSkillXP(worker, 'magic', 'elemental', 8);
+        worker.inventory.push({ type: 'potion', qty: 1 });
+      }
+      if (t === 'enchanter' && tick % 48 === 0) {
+        treasury.tokens = (treasury.tokens || 0) + 1;
+        addSkillXP(worker, 'magic', 'enchant', 15);
+        addSkillXP(worker, 'craft', 'enchant', 10);
+      }
+      if (t === 'mage' && tick % 48 === 0) {
         treasury.gems = (treasury.gems || 0) + 1;
         addSkillXP(worker, 'magic', 'elemental', 15);
         addSkillXP(worker, 'magic', 'enchant', 10);
         worker.mana = Math.min(100, (worker.mana || 50) + 5);
       }
-      if (jobDef.type === 'priest' && tick % 36 === 0) {
+      if (t === 'priest' && tick % 36 === 0) {
         addSkillXP(worker, 'magic', 'healing', 12);
+        for (const r of residents.slice(0, 3)) r.needs.safety = Math.min(100, (r.needs.safety || 70) + 8);
       }
-      if (jobDef.type === 'guard' && tick % 24 === 0) {
+      if (t === 'scholar' && tick % 48 === 0) {
+        addSkillXP(worker, 'leadership', 'govern', 12);
+        creditWallet(treasury, 4);
+      }
+      if (t === 'chronicler' && tick % 48 === 0) {
+        addSkillXP(worker, 'leadership', 'persuade', 8);
+      }
+      if (t === 'guard' && tick % 24 === 0) {
         addSkillXP(worker, 'combat', 'melee', 10);
         addSkillXP(worker, 'combat', 'tactics', 8);
       }
-      if (jobDef.type === 'noble' && tick % 48 === 0) {
+      if (t === 'watchman' && tick % 24 === 0) {
+        addSkillXP(worker, 'combat', 'melee', 6);
+        addSkillXP(worker, 'combat', 'dodge', 6);
+      }
+      if (t === 'warlord' && tick % 36 === 0) {
+        addSkillXP(worker, 'combat', 'tactics', 15);
+        addSkillXP(worker, 'combat', 'melee', 10);
+        addSkillXP(worker, 'leadership', 'command', 12);
+      }
+      if (t === 'ranger' && tick % 24 === 0) {
+        addSkillXP(worker, 'combat', 'archery', 12);
+        addSkillXP(worker, 'survival', 'hunt', 8);
+        settlement.foodStore += Math.floor(3 * foodMult);
+      }
+      if (t === 'executioner' && tick % 48 === 0) {
+        addSkillXP(worker, 'combat', 'melee', 8);
+      }
+      if (t === 'noble' && tick % 48 === 0) {
         addSkillXP(worker, 'leadership', 'govern', 15);
         addSkillXP(worker, 'leadership', 'command', 10);
       }
-      if (jobDef.type === 'thief' && tick % 48 === 0) {
+      if (t === 'diplomat' && tick % 48 === 0) {
+        addSkillXP(worker, 'leadership', 'command', 12);
+        addSkillXP(worker, 'leadership', 'persuade', 10);
+      }
+      if (t === 'thief' && tick % 48 === 0) {
         addSkillXP(worker, 'crime', 'stealth', 12);
       }
-      if (jobDef.type === 'adventurer' && tick % 36 === 0) {
+      if (t === 'spy' && tick % 48 === 0) {
+        addSkillXP(worker, 'crime', 'stealth', 10);
+        addSkillXP(worker, 'leadership', 'persuade', 6);
+      }
+      if (t === 'assassin' && tick % 48 === 0) {
+        addSkillXP(worker, 'crime', 'assassinate', 14);
+        addSkillXP(worker, 'crime', 'stealth', 8);
+      }
+      if (t === 'adventurer' && tick % 36 === 0) {
         addSkillXP(worker, 'combat', 'tactics', 10);
         addSkillXP(worker, 'combat', 'melee', 8);
       }
-      if (jobDef.type === 'merchant' && tick % 24 === 0) {
-        addSkillXP(worker, 'leadership', 'trade', 10);
-      }
-      if (jobDef.type === 'blacksmith' && tick % 36 === 0) {
-        addSkillXP(worker, 'craft', 'smith', 12);
+      if (t === 'clerk' && tick % 48 === 0) {
+        addSkillXP(worker, 'leadership', 'persuade', 8);
       }
     }
   }

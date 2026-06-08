@@ -2,7 +2,7 @@ import { EVENT } from './events.js';
 import { createSkills } from './skills.js';
 import { createWallet, creditWallet, walletTotal } from './currency.js';
 import { assignAgentHome } from './construction.js';
-import { generateName, generatePersonality } from './races.js';
+import { generateName, generatePersonality, getRacialTension } from './races.js';
 import { hexKey } from './hex.js';
 import { RNG } from './rng.js';
 
@@ -26,6 +26,7 @@ export function tickSocial(agents, bus, tick, rng, world, season) {
   attemptRomance(agents, rng, tick, birthMult);
   tickRevolts(agents, world, bus, tick, rng);
   tickSuccession(agents, world, bus, tick, rng);
+  if (tick % 480 === 0) tickRacialTensions(agents, world, bus, tick, rng);
 }
 
 function decayRelationships(agent) {
@@ -142,6 +143,9 @@ function _pushEvent(settlement, text, tick) {
   settlement.recentEvents = settlement.recentEvents || [];
   settlement.recentEvents.push({ tick, text });
   if (settlement.recentEvents.length > 12) settlement.recentEvents.shift();
+  settlement.events = settlement.events || [];
+  settlement.events.unshift({ text, tick });
+  if (settlement.events.length > 30) settlement.events.length = 30;
 }
 
 function attemptRomance(agents, rng, tick, birthMult = 1) {
@@ -309,4 +313,29 @@ export function handleDeath(agent, agents, tick, world, guilds) {
   }
   agent.job = null;
   agent.hasHome = false;
+}
+
+function tickRacialTensions(agents, world, bus, tick, rng) {
+  for (const settlement of world.settlements) {
+    const residents = agents.filter(a => !a.dead && (a.settlementId === settlement.id || a.employerId === settlement.id));
+    // Check for racial pairs with tension
+    const races = [...new Set(residents.map(a => a.race))];
+    for (let i = 0; i < races.length; i++) {
+      for (let j = i + 1; j < races.length; j++) {
+        const tension = getRacialTension(races[i], races[j]);
+        if (tension > 0 && rng.next() < tension * 0.15) {
+          const groupA = residents.filter(a => a.race === races[i]);
+          const groupB = residents.filter(a => a.race === races[j]);
+          if (!groupA.length || !groupB.length) continue;
+          const agentA = rng.pick(groupA);
+          const agentB = rng.pick(groupB);
+          agentA.infamy = (agentA.infamy || 0) + 3;
+          agentB.infamy = (agentB.infamy || 0) + 3;
+          agentA.health = Math.max(1, agentA.health - 5);
+          agentB.health = Math.max(1, agentB.health - 5);
+          _pushEvent(settlement, `Racial brawl: ${agentA.name} (${agentA.race}) vs ${agentB.name} (${agentB.race})`, tick);
+        }
+      }
+    }
+  }
 }

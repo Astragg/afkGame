@@ -44,3 +44,22 @@ export function hashSeed(str) {
   }
   return h >>> 0;
 }
+
+/** Cryptographically random 32-bit seed for new worlds */
+export function generateRandomSeed() {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return buf[0] >>> 0;
+  }
+  return (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+}
+
+/** Parse ?seed=12345 or ?seed=myworld from the URL */
+export function seedFromUrl() {
+  if (typeof location === 'undefined') return null;
+  const raw = new URLSearchParams(location.search).get('seed');
+  if (raw == null || raw === '') return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? (n >>> 0) : hashSeed(raw);
+}

@@ -6,7 +6,8 @@ import {
 import { getFootprint } from './construction.js';
 import { BIOME_BY_ID } from './biomes.js';
 import { formatWallet } from './currency.js';
-import { getAnimalColor } from './animals.js';
+import { getAnimalColor, getAnimalInfo, getClimateLabel, getHexClimate } from './animals.js';
+import { getAgeTint, getAgeLabel } from './ages.js';
 
 const THEME = {
   glass: 'rgba(16,20,34,0.86)',
@@ -151,6 +152,10 @@ export class Renderer {
     const seasonTint = seasonTints[ui?.season];
     if (seasonTint) { ctx.fillStyle = seasonTint; ctx.fillRect(0, 0, w, h); }
 
+    // age era tint
+    const ageTint = getAgeTint(ui?.game?.world?.age ?? 0);
+    if (ageTint) { ctx.fillStyle = ageTint; ctx.fillRect(0, 0, w, h); }
+
     const size = this.hexSize * zoom;
 
     // hover hex highlight (skip when hovering a building — footprint highlight handles that)
@@ -169,6 +174,9 @@ export class Renderer {
 
     // caravans
     if (ui?.caravans?.length) this._drawCaravans(ctx, ui.caravans, size, w, h);
+
+    // ships
+    if (ui?.ships?.length) this._drawShips(ctx, ui.ships, size, w, h);
 
     // animals (culled)
     if (ui?.animals?.length) this._drawAnimals(ctx, ui.animals, size, w, h);
@@ -189,8 +197,10 @@ export class Renderer {
     if (ui?.inspectBuilding) this.drawBuildingPanel(ui.inspectBuilding, ui);
     if (ui?.inspectAgent) this.drawInspectPanel(ui.inspectAgent, ui);
     if (ui?.hoverAgent) this.drawTooltip(ui.hoverAgent, ui.mouseX, ui.mouseY);
+    else if (ui?.hoverAnimal) this.drawAnimalTooltip(ui.hoverAnimal, ui.mouseX, ui.mouseY);
     else if (this.hoverHex && !ui?.inspectAgent && !ui?.pauseMenuOpen) this.drawHexTooltip(this.hoverHex, ui?.mouseX, ui?.mouseY);
     if (ui?.pauseMenu) ui.pauseMenu.draw(ctx, w, h, ui.game);
+    if (ui?.game?.awaySummary) this.drawAwaySummary(ui.game.awaySummary, w, h);
   }
 
   _trackFps() {
@@ -300,6 +310,34 @@ export class Renderer {
       // goods label dot
       ctx.fillStyle = c.goods === 'food' ? '#60c040' : '#e0c060';
       ctx.beginPath(); ctx.arc(scr.x, scr.y - r * 0.2, r * 0.25, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  _drawShips(ctx, ships, size, w, h) {
+    const margin = size * 3;
+    for (const ship of ships) {
+      if (ship.state === 'docked') continue;
+      const p = hexToPixel(ship.q, ship.r, this.hexSize);
+      if (!this._onScreen(p.x, p.y, w, h, margin)) continue;
+      const scr = this.worldToScreen(p.x, p.y);
+      const r = size * 0.22;
+      // Hull
+      ctx.fillStyle = ship.pirated ? '#a03020' : '#6040a0';
+      ctx.strokeStyle = '#1a1040';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(scr.x, scr.y, r * 1.4, r * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      // Sail
+      ctx.fillStyle = '#dde0f0';
+      ctx.beginPath();
+      ctx.moveTo(scr.x, scr.y - r * 0.5);
+      ctx.lineTo(scr.x - r * 0.6, scr.y - r * 1.4);
+      ctx.lineTo(scr.x + r * 0.6, scr.y - r * 1.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#8890c0';
+      ctx.stroke();
     }
   }
 
@@ -433,7 +471,7 @@ export class Renderer {
     const living = agents.filter(a => !a.dead).length;
 
     // Top-left main panel
-    panel(ctx, pad, pad, 252, 128);
+    panel(ctx, pad, pad, 252, 148);
     accentBar(ctx, pad, pad, 252);
     ctx.textAlign = 'left';
     // logo diamond
@@ -454,32 +492,43 @@ export class Renderer {
     ctx.font = '600 22px "Segoe UI", sans-serif';
     ctx.fillStyle = THEME.text;
     ctx.fillText(`${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`, pad + 14, pad + 64);
+    // Day + season on one line
+    const sLabels = { spring: '🌱 Spring', summer: '☀ Summer', autumn: '🍂 Autumn', winter: '❄ Winter' };
+    const sLabel = ui?.season ? sLabels[ui.season] : '';
+    const sColor = ui?.season === 'winter' ? '#a8c8e8' : ui?.season === 'autumn' ? '#d09050' : ui?.season === 'spring' ? '#80c060' : '#f0c030';
     ctx.font = '12px "Segoe UI", sans-serif';
     ctx.fillStyle = THEME.dim;
-    ctx.fillText(`Day ${ui?.day || 1}`, pad + 80, pad + 64);
-    // season label
-    if (ui?.season) {
-      const sLabel = { spring: '🌱 Spring', summer: '☀ Summer', autumn: '🍂 Autumn', winter: '❄ Winter' };
-      ctx.fillStyle = ui.season === 'winter' ? '#a8c8e8' : ui.season === 'autumn' ? '#d09050' : ui.season === 'spring' ? '#80c060' : '#f0d060';
-      ctx.fillText(sLabel[ui.season] || ui.season, pad + 80, pad + 75);
+    ctx.fillText(`Day ${ui?.day || 1}`, pad + 80, pad + 58);
+    if (sLabel) {
+      ctx.fillStyle = sColor;
+      ctx.font = '11px "Segoe UI", sans-serif';
+      ctx.fillText(sLabel, pad + 80, pad + 72);
     }
 
-    drawWeatherIcon(ctx, pad + 132, pad + 56, 11, weather);
+    // Weather on its own row
+    drawWeatherIcon(ctx, pad + 155, pad + 60, 9, weather);
     ctx.fillStyle = THEME.dim;
-    ctx.fillText(weather, pad + 150, pad + 60);
+    ctx.font = '11px "Segoe UI", sans-serif';
+    ctx.fillText(weather, pad + 170, pad + 65);
 
     // chips row
-    chip(ctx, pad + 14, pad + 78, `◍ ${living}`, THEME.accent);
-    chip(ctx, pad + 84, pad + 78, `⚑ ${world.settlements?.length || 0}`, THEME.good);
-    chip(ctx, pad + 150, pad + 78, `${ui?.speedLabel || '1x'}`, THEME.accentWarm);
+    chip(ctx, pad + 14, pad + 88, `◍ ${living}`, THEME.accent);
+    chip(ctx, pad + 84, pad + 88, `⚑ ${world.settlements?.length || 0}`, THEME.good);
+    chip(ctx, pad + 150, pad + 88, `${ui?.speedLabel || '1x'}`, THEME.accentWarm);
     ctx.fillStyle = this.fps < 25 ? THEME.bad : THEME.dim;
     ctx.font = '11px "Segoe UI", sans-serif';
-    ctx.fillText(`${this.fps} fps`, pad + 196, pad + 95);
+    ctx.fillText(`${this.fps} fps`, pad + 196, pad + 107);
+
+    // world age era
+    const worldAge = ui?.game?.world?.age ?? 0;
+    ctx.fillStyle = '#c8b0ff';
+    ctx.font = '11px "Segoe UI", sans-serif';
+    ctx.fillText(getAgeLabel(worldAge), pad + 14, pad + 128);
 
     // settlement spotlight
     if (world.settlements?.length) {
       const s = world.settlements.reduce((a, b) => (b.population > a.population ? b : a), world.settlements[0]);
-      const sy = pad + 142;
+      const sy = pad + 162;
       panel(ctx, pad, sy, 252, 70);
       ctx.fillStyle = THEME.accent;
       ctx.font = '700 13px "Segoe UI", sans-serif';
@@ -575,13 +624,16 @@ export class Renderer {
   drawTooltip(agent, mx, my) {
     if (!agent || mx == null) return;
     const ctx = this.ctx;
+    const repLabel = agent.wantedLevel >= 1 ? '⚠ Wanted' : agent.fame >= 200 ? '⭐ Legend' : agent.fame >= 100 ? '🌟 Champion' : agent.fame >= 40 ? '🗡 Notable' : '';
+    const diseaseStr = agent.disease ? ` · 🤒 ${agent.disease.id}` : '';
     const lines = [
-      `${agent.name}`,
-      `${agent.race}${agent.crowned ? '  ♛' : ''} · ${agent.sex} · ${Math.floor(agent.age)}y`,
+      `${agent.name}${agent.crowned ? '  ♛' : ''}${repLabel ? '  ' + repLabel : ''}`,
+      `${agent.race} · ${agent.sex} · ${Math.floor(agent.age)}y${diseaseStr}`,
       `${agent.job || 'unemployed'} — ${agent.currentAction || 'idle'}`,
       `${formatWallet(agent.wallet)}`,
+      agent.faith ? `Faith: ${agent.faith}` : '',
       agent.hasHome ? 'Has a home' : '⚠ Sleeps in the wild',
-    ];
+    ].filter(Boolean);
     const tw = 210, th = 22 + lines.length * 17 + 18;
     const x = Math.min(mx + 16, this.canvas.width - tw - 8);
     const y = Math.min(my + 16, this.canvas.height - th - 8);
@@ -594,7 +646,9 @@ export class Renderer {
     ctx.font = '11px "Segoe UI", sans-serif';
     ctx.fillStyle = THEME.dim;
     for (let i = 1; i < lines.length; i++) {
-      ctx.fillStyle = i === lines.length - 1 && !agent.hasHome ? THEME.accentWarm : THEME.dim;
+      const isWarn = lines[i].startsWith('⚠');
+      const isGood = lines[i].startsWith('Faith') || lines[i].startsWith('Has a');
+      ctx.fillStyle = isWarn ? THEME.accentWarm : isGood ? THEME.good : THEME.dim;
       ctx.fillText(lines[i], x + 12, y + 26 + i * 17);
     }
     // mini need bars
@@ -626,6 +680,39 @@ export class Renderer {
     ctx.font = '11px "Segoe UI", sans-serif';
     ctx.fillStyle = THEME.dim;
     for (let i = 1; i < lines.length; i++) ctx.fillText(lines[i], x + 12, y + 22 + i * 16);
+  }
+
+  drawAnimalTooltip(animal, mx, my) {
+    if (!animal || mx == null) return;
+    const ctx = this.ctx;
+    const info = getAnimalInfo(animal.type);
+    const name = info.label || animal.type;
+    const hexClimate = this.hoverHex ? getHexClimate(this.hoverHex) : animal.climate;
+    const climateHere = hexClimate ? getClimateLabel(hexClimate) : null;
+    const lines = [
+      `${info.icon}  ${name}`,
+      animal.category === 'livestock' ? 'Livestock — owned' : 'Wild animal',
+      `Habitat: ${info.habitat || 'Unknown'}`,
+      climateHere ? `Climate here: ${climateHere}` : '',
+      `Diet: ${info.diet}  ·  ${info.danger}`,
+      `Health: ${Math.floor(animal.health)}%`,
+      animal.category === 'livestock' ? (animal.fed ? '✓ Fed' : '⚠ Hungry') : 'Huntable for food',
+    ].filter(Boolean);
+    const tw = 220, th = 18 + lines.length * 16 + 8;
+    const x = Math.min(mx + 16, this.canvas.width - tw - 8);
+    const y = Math.min(my + 16, this.canvas.height - th - 8);
+    panel(ctx, x, y, tw, th);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = THEME.text;
+    ctx.font = '700 13px "Segoe UI", sans-serif';
+    ctx.fillText(lines[0], x + 12, y + 22);
+    ctx.font = '11px "Segoe UI", sans-serif';
+    for (let i = 1; i < lines.length; i++) {
+      ctx.fillStyle = i === lines.length - 1 && !animal.fed && animal.category === 'livestock' ? THEME.bad : THEME.dim;
+      ctx.fillText(lines[i], x + 12, y + 22 + i * 16);
+    }
+    // small health bar
+    bar(ctx, x + 12, y + th - 10, tw - 24, 5, animal.health / 100, animal.health > 50 ? THEME.good : THEME.bad);
   }
 
   // ---------- inspect panel ----------
@@ -767,6 +854,41 @@ export class Renderer {
     ctx.fillText('Esc to close', px + 16, py + ph - 10);
   }
 
+  drawAwaySummary(summary, w, h) {
+    if (!summary) return;
+    const ctx = this.ctx;
+    const pw = Math.min(420, w - 40);
+    const ph = Math.min(340, 80 + summary.entries.length * 18);
+    const px = (w - pw) / 2;
+    const py = (h - ph) / 2;
+
+    ctx.fillStyle = 'rgba(5,8,18,0.75)';
+    ctx.fillRect(0, 0, w, h);
+
+    panel(ctx, px, py, pw, ph);
+    accentBar(ctx, px, py, pw, '#7aa2ff');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = THEME.text;
+    ctx.font = '700 16px "Segoe UI", sans-serif';
+    ctx.fillText('While You Were Away', px + 16, py + 30);
+    ctx.font = '12px "Segoe UI", sans-serif';
+    ctx.fillStyle = THEME.dim;
+    ctx.fillText(`${summary.daysAway} days passed · ${summary.totalEvents} events`, px + 16, py + 50);
+
+    let y = py + 72;
+    ctx.font = '11px "Segoe UI", sans-serif';
+    for (const e of summary.entries.slice(0, 12)) {
+      ctx.fillStyle = THEME.dim;
+      ctx.fillText(e.text.slice(0, 52), px + 16, y);
+      y += 17;
+    }
+    ctx.fillStyle = '#607090';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Click anywhere to dismiss', px + pw / 2, py + ph - 12);
+    ctx.textAlign = 'left';
+  }
+
   // ---------- hit tests ----------
   hitTestBuildingHex(world, sx, sy) {
     const worldPos = this.screenToWorld(sx, sy);
@@ -776,6 +898,18 @@ export class Renderer {
     const settlement = world.settlements.find(s => s.id === tile.building.settlementId);
     if (!settlement) return null;
     return { settlement, hex: tile, building: tile.building };
+  }
+
+  hitTestAnimal(animals, sx, sy) {
+    const size = this.hexSize * this.camera.zoom;
+    const hitR = (size * 0.45) ** 2;
+    for (const animal of animals) {
+      const p = hexToPixel(animal.q, animal.r, this.hexSize);
+      const scr = this.worldToScreen(p.x, p.y);
+      const dx = sx - scr.x, dy = sy - scr.y;
+      if (dx * dx + dy * dy < hitR) return animal;
+    }
+    return null;
   }
 
   hitTestAgent(agents, sx, sy) {

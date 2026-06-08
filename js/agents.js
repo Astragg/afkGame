@@ -1,8 +1,8 @@
 import { RNG } from './rng.js';
 import { findPath, hexKey, hexNeighbors, getMoveCost } from './hex.js';
-import { RACE_LIST, RACES, generateName, generatePersonality } from './races.js';
+import { RACE_LIST, RACES, generateName, generatePersonality, getRacialTension } from './races.js';
 import { createSkills, SKILL_BRANCHES, RACE_SKILL_DEPTH, addSkillXP } from './skills.js';
-import { hireAgent, jobSuitability } from './economy.js?v=7';
+import { hireAgent, jobSuitability } from './economy.js?v=12';
 import { executeConquer } from './kingdoms.js';
 import { commitCrime } from './crime.js';
 import { assignQuest } from './guilds.js';
@@ -92,6 +92,11 @@ export function createAgent(index, race, hex, settlement, rng) {
     starvationTicks: 0,
     blessed: 0,
     cursed: 0,
+    fame: 0,
+    infamy: 0,
+    wantedLevel: 0,
+    faith: null,
+    maxAge: (RACES[race]?.lifespan || 80) * (0.85 + Math.random() * 0.3),
     addEvent(tick, text) {
       this.eventLog.push({ tick, text });
       if (this.eventLog.length > 50) this.eventLog.shift();
@@ -112,6 +117,15 @@ function grantStartingSkills(agent, race, rng) {
     const key = `${branch}.${pick}`;
     if (agent.skills[key] !== undefined) {
       agent.skills[key] = rng.int(1, 3);
+    }
+  }
+  // Apply racial bonus skills
+  const raceDef = RACES[race];
+  if (raceDef?.bonuses) {
+    for (const [skillKey, bonus] of Object.entries(raceDef.bonuses)) {
+      if (agent.skills[skillKey] !== undefined) {
+        agent.skills[skillKey] = (agent.skills[skillKey] || 0) + bonus;
+      }
     }
   }
 }
@@ -160,15 +174,19 @@ export function tickAgents(agents, world, guilds, bus, tick, timeOfDay, weather)
 }
 
 function checkOldAge(agent, bus, tick) {
-  const lifespan = RACES[agent.race]?.lifespan || 80;
-  if (agent.age < lifespan * 0.75) return;
-  const over = (agent.age - lifespan * 0.75) / (lifespan * 0.25);
+  const maxAge = agent.maxAge || (RACES[agent.race]?.lifespan || 80);
+  const threshold = maxAge * 0.75;
+  if (agent.age < threshold) return;
+  const over = (agent.age - threshold) / (maxAge * 0.25);
   const dailyChance = 0.0006 + over * over * 0.012;
-  if (Math.random() < dailyChance || agent.age > lifespan * 1.15) {
+  if (Math.random() < dailyChance || agent.age > maxAge) {
     agent.dead = true;
     agent.causeOfDeath = 'old age';
-    agent.addEvent(tick, `Died of old age at ${Math.floor(agent.age)}`);
-    bus.emit(EVENT.DEATH, { agent: agent.id, cause: 'old_age', tick });
+    // Leave gravestone data
+    agent.gravestone = { name: agent.name, race: agent.race, age: Math.floor(agent.age), job: agent.job, fame: agent.fame || 0, q: agent.q, r: agent.r };
+    agent.addEvent(tick, `Died peacefully of old age at ${Math.floor(agent.age)}`);
+    bus.emit(EVENT.DEATH, { agent: agent.id, cause: 'old_age', age: Math.floor(agent.age), tick });
+    bus.emit(EVENT.OLD_AGE_DEATH, { agent, tick });
   }
 }
 

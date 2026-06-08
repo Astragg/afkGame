@@ -1,8 +1,12 @@
 import { computeRankings } from './rankings.js';
 import { formatWallet } from './currency.js';
 import { getSeason, getYear, getDayInSeason, getSeasonLabel } from './seasons.js';
+import { AGES, getAgeLabel } from './ages.js';
+import { MILESTONES } from './milestones.js';
+import { getDynastyLeaderboard } from './dynasties.js';
+import { getAwaySummary } from './chronicle.js';
 
-const TABS = ['Overview', 'Rankings', 'Families', 'Settlements'];
+const TABS = ['Overview', 'Rankings', 'Families', 'Settlements', 'Chronicle'];
 
 export class PauseMenu {
   constructor() {
@@ -12,7 +16,7 @@ export class PauseMenu {
     this.rankCategory = 'swordsman';
     this.selectedFamily = 0;
     this.selectedSettlement = 0;
-    this.bounds = { tabs: [], close: null, categories: [], settlements: [], agentRows: [] };
+    this.bounds = { tabs: [], close: null, categories: [], settlements: [], agentRows: [], newWorld: null };
     this._pendingJump = null;
   }
 
@@ -49,19 +53,24 @@ export class PauseMenu {
         return { action: 'jumpToAgent', id: row.id };
       }
     }
+    if (b.newWorld && mx >= b.newWorld.x && mx <= b.newWorld.x + b.newWorld.w &&
+        my >= b.newWorld.y && my <= b.newWorld.y + b.newWorld.h) {
+      return { action: 'newWorld' };
+    }
     if (mx >= b.panel.x && mx <= b.panel.x + b.panel.w && my >= b.panel.y && my <= b.panel.y + b.panel.h) {
       return { action: 'panel' };
     }
     return { action: 'backdrop' };
   }
 
-  handleClick(hit) {
+  handleClick(hit, game) {
     if (!hit) return false;
     if (hit.action === 'close' || hit.action === 'backdrop') { this.close(); return true; }
     if (hit.action === 'tab') { this.tab = hit.index; this.scroll = 0; return true; }
     if (hit.action === 'category') { this.rankCategory = hit.key; this.scroll = 0; return true; }
     if (hit.action === 'settlement') { this.selectedSettlement = hit.index; this.scroll = 0; return true; }
     if (hit.action === 'jumpToAgent') { this._pendingJump = hit.id; this.close(); return true; }
+    if (hit.action === 'newWorld' && game) { game.newWorld(); return true; }
     return true;
   }
 
@@ -92,6 +101,19 @@ export class PauseMenu {
     ctx.fillText('Aetherworld — World Almanac', px + 20, py + 32);
 
     const closeX = px + pw - 44, closeY = py + 12;
+    const nwX = closeX - 124, nwY = closeY, nwW = 116, nwH = 28;
+    roundRect(ctx, nwX, nwY, nwW, nwH, 6);
+    ctx.fillStyle = '#3a5040';
+    ctx.fill();
+    ctx.strokeStyle = '#6a9870';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#c8e8c0';
+    ctx.font = '12px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🌍 New World', nwX + nwW / 2, nwY + 18);
+    this.bounds.newWorld = { x: nwX, y: nwY, w: nwW, h: nwH };
+
     roundRect(ctx, closeX, closeY, 32, 28, 6);
     ctx.fillStyle = '#4a3060';
     ctx.fill();
@@ -104,16 +126,17 @@ export class PauseMenu {
     this.bounds.tabs = [];
     const tabY = py + 48;
     TABS.forEach((label, i) => {
-      const tx = px + 16 + i * 110;
+      const tx = px + 16 + i * 88;
       const active = this.tab === i;
-      roundRect(ctx, tx, tabY, 100, 28, 6);
+      roundRect(ctx, tx, tabY, 82, 28, 6);
       ctx.fillStyle = active ? '#4a68a8' : '#2a3450';
       ctx.fill();
       ctx.fillStyle = active ? '#fff' : '#90a8c8';
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(label, tx + 50, tabY + 18);
-      this.bounds.tabs.push({ x: tx, y: tabY, w: 100, h: 28 });
+      ctx.font = '11px sans-serif';
+      ctx.fillText(label, tx + 41, tabY + 18);
+      this.bounds.tabs.push({ x: tx, y: tabY, w: 82, h: 28 });
     });
 
     const contentY = tabY + 44;
@@ -128,13 +151,14 @@ export class PauseMenu {
       case 1: this.drawRankings(ctx, px, contentY, pw, rankings); break;
       case 2: this.drawFamilies(ctx, px, contentY, pw, rankings); break;
       case 3: this.drawSettlements(ctx, px, contentY, pw, rankings); break;
+      case 4: this.drawChronicle(ctx, px, contentY, pw, game); break;
     }
     ctx.restore();
 
     ctx.fillStyle = '#607090';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Space or Esc to close  ·  Scroll rankings with mouse wheel', canvasW / 2, py + ph - 8);
+    ctx.fillText('Space/Esc close  ·  Ctrl+Shift+N new random world  ·  ?seed=12345 in URL', canvasW / 2, py + ph - 8);
   }
 
   drawOverview(ctx, px, y, pw, rankings, game) {
@@ -146,7 +170,10 @@ export class PauseMenu {
     const alliances = (game.kingdoms || []).reduce((n, k) => n + (k.allies?.length || 0), 0) / 2;
     const atWar = (game.kingdoms || []).filter(k => (k.atWar?.length || 0) > 0).length;
 
+    const ageDef = AGES[game.world?.age || 0] || AGES[0];
     const lines = [
+      ['World Seed', `${game.seed}`],
+      ['World Age', `${ageDef.icon} ${ageDef.name}`],
       ['World Size', `${ws.hexes.toLocaleString()} hexes`],
       ['Population', `${ws.agents} living / ${ws.dead} dead`],
       ['Settlements', `${ws.settlements}`],
@@ -360,6 +387,86 @@ export class PauseMenu {
     ctx.fillStyle = '#8098b8';
     for (const e of (sel.events || []).slice(0, 4)) {
       ctx.fillText(String(e.text || e).slice(0, 55), dx, dy); dy += 14;
+    }
+  }
+
+  drawChronicle(ctx, px, y, pw, game) {
+    const dx = px + 24;
+    let cy = y + 10;
+    const ageDef = AGES[game.world?.age || 0] || AGES[0];
+    const nextAge = AGES[(game.world?.age || 0) + 1];
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#a0c0e8';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`${ageDef.icon} ${ageDef.name}`, dx, cy);
+    cy += 18;
+    ctx.fillStyle = '#8098b8';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(ageDef.desc, dx, cy);
+    cy += 16;
+    ctx.fillStyle = '#607890';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(ageDef.flavor, dx, cy, pw - 48);
+    cy += 28;
+
+    if (nextAge) {
+      ctx.fillStyle = '#7090b0';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`Next: ${nextAge.icon} ${nextAge.name}`, dx, cy);
+      cy += 22;
+    }
+
+    // Milestones
+    ctx.fillStyle = '#a0c0e8';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(`🏆 Milestones (${game.milestones?.achieved?.length || 0}/${MILESTONES.length})`, dx, cy);
+    cy += 18;
+    ctx.font = '11px sans-serif';
+    const achieved = new Set(game.milestones?.achieved || []);
+    for (const m of MILESTONES) {
+      const done = achieved.has(m.id);
+      ctx.fillStyle = done ? '#7ddf9a' : '#506070';
+      ctx.fillText(`${done ? '✓' : '○'} ${m.label}`, dx + 8, cy);
+      cy += 14;
+      if (cy > y + 200) break;
+    }
+    cy += 10;
+
+    // Dynasty board (right column)
+    const rx = px + pw / 2 + 8;
+    let ry = y + 10;
+    ctx.fillStyle = '#a0c0e8';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('👑 Dynasty Scoreboard', rx, ry);
+    ry += 20;
+    const houses = getDynastyLeaderboard(game.dynasties || { houses: {} });
+    ctx.font = '11px sans-serif';
+    if (!houses.length) {
+      ctx.fillStyle = '#607090';
+      ctx.fillText('No ruling dynasties yet…', rx, ry);
+    } else {
+      houses.slice(0, 8).forEach((h, i) => {
+        ctx.fillStyle = i === 0 ? '#ffd27a' : '#b0c8e8';
+        ctx.fillText(`${i + 1}. ${h.name} — ${h.ruleTicks}d rule, ${h.settlements.length} lands`, rx, ry);
+        ry += 14;
+      });
+    }
+    ry += 16;
+
+    // Away summary / recent chronicle
+    const away = getAwaySummary(game.chronicle, game.tick || 0, 24);
+    ctx.fillStyle = '#a0c0e8';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(away ? `📜 While you were away (${away.daysAway} days)` : '📜 Recent Chronicle', rx, ry);
+    ry += 18;
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#8098b8';
+    const entries = away ? away.entries : (game.chronicle?.entries || []).slice(0, 12);
+    for (const e of entries) {
+      ctx.fillText(String(e.text).slice(0, 48), rx, ry);
+      ry += 13;
+      if (ry > y + 380) break;
     }
   }
 }

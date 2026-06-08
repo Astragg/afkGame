@@ -1,6 +1,7 @@
 import { hexKey } from './hex.js';
 import { addJobSlots } from './worldgen.js';
 import { payFromWallet } from './currency.js';
+import { isBuildingUnlocked } from './ages.js';
 
 /** Axial offsets from anchor hex — buildings span multiple tiles */
 export const BUILDING_FOOTPRINTS = {
@@ -225,8 +226,34 @@ export function agentAtHome(agent, world) {
   return hex.building.residents?.includes(agent.id);
 }
 
+const TIER_BUILD_PLANS = {
+  town:    ['home', 'home', 'farm', 'market', 'tavern', 'barracks', 'prison', 'temple', 'guild_hall', 'granary', 'home'],
+  village: ['home', 'home', 'farm', 'market', 'tavern', 'barracks', 'prison', 'granary'],
+  hamlet:  ['home', 'home', 'farm', 'market', 'tavern', 'granary'],
+};
+
+/** Buildings every settlement of a tier starts with (already completed) */
+const TIER_GUARANTEED = {
+  town:    ['prison', 'barracks'],
+  village: ['prison'],
+  hamlet:  [],
+};
+
+export function getPrisonHex(settlement, world) {
+  const record = settlement.buildings?.find(b => b.type === 'prison' && b.completed !== false);
+  if (!record) return null;
+  const hex = world.hexMap.get(hexKey(record.hex.q, record.hex.r));
+  if (!hex?.building || hex.building.underConstruction) return null;
+  return hex;
+}
+
+export function settlementHasBuilding(settlement, type, includeQueued = false) {
+  if (settlement.buildings?.some(b => b.type === type)) return true;
+  if (includeQueued && settlement.constructionQueue?.some(s => s.type === type)) return true;
+  return false;
+}
+
 export function initSettlementConstruction(hexMap, settlements, rng, tick = 0) {
-  const plans = ['home', 'home', 'farm', 'market', 'tavern', 'home', 'barracks', 'granary'];
   for (const settlement of settlements) {
     settlement.constructionQueue = [];
     settlement.treasuryWallet = settlement.treasuryWallet || {
@@ -250,10 +277,21 @@ export function initSettlementConstruction(hexMap, settlements, rng, tick = 0) {
       }, hex, { hexMap, _agents: [] });
     }
 
-    const buildCount = 4 + rng.int(0, 4);
-    const types = rng.shuffle([...plans]).slice(0, buildCount);
-    for (let i = 0; i < buildCount; i++) {
-      const type = types[i] || 'home';
+    const tier = settlement.tier || 'hamlet';
+    for (const type of TIER_GUARANTEED[tier] || []) {
+      if (settlementHasBuilding(settlement, type)) continue;
+      const hex = findFootprintSite(settlement, type, hexMap);
+      if (!hex) continue;
+      completeConstruction(settlement, {
+        type, hex: { q: hex.q, r: hex.r }, startedTick: tick, totalTicks: 0,
+      }, hex, { hexMap, _agents: [] });
+    }
+
+    const planPool = (TIER_BUILD_PLANS[tier] || TIER_BUILD_PLANS.hamlet)
+      .filter(t => !settlementHasBuilding(settlement, t));
+    const buildCount = Math.min(planPool.length, 4 + rng.int(0, 4));
+    const types = rng.shuffle(planPool).slice(0, buildCount);
+    for (const type of types) {
       const hex = findFootprintSite(settlement, type, hexMap);
       if (!hex) continue;
       if (queueConstruction(settlement, hex, type, tick, hexMap)) {
@@ -270,6 +308,7 @@ function siteProgressBoost(settlement, hex, rng) {
 
 export function planNewBuildings(world, rng, tick) {
   if (tick % 168 !== 0) return;
+  const worldAge = world.age || 0;
   for (const settlement of world.settlements) {
     const homeless = settlement.population - countHomed(settlement, world);
     if (homeless > 2) {
@@ -278,9 +317,30 @@ export function planNewBuildings(world, rng, tick) {
         hex.settlementId = settlement.id;
       }
     }
-    if (settlement.population > 15 && !settlement.buildings.some(b => b.type === 'market')) {
+    if (settlement.population > 15 && !settlementHasBuilding(settlement, 'market', true)) {
       const hex = findFootprintSite(settlement, 'market', world.hexMap);
       if (hex) queueConstruction(settlement, hex, 'market', tick, world.hexMap);
+    }
+    // Every village+ needs a prison once population warrants law enforcement
+    const needsPrison = settlement.population >= 8 || (settlement.prisoners?.length || 0) > 0;
+    if (needsPrison && !settlementHasBuilding(settlement, 'prison', true)) {
+      const hex = findFootprintSite(settlement, 'prison', world.hexMap);
+      if (hex) queueConstruction(settlement, hex, 'prison', tick, world.hexMap);
+    }
+    if (worldAge >= 3 && settlement.tier === 'town' && settlement.population > 20 &&
+        !settlementHasBuilding(settlement, 'temple', true) && isBuildingUnlocked('temple', worldAge)) {
+      const hex = findFootprintSite(settlement, 'temple', world.hexMap);
+      if (hex) queueConstruction(settlement, hex, 'temple', tick, world.hexMap);
+    }
+    if (worldAge >= 2 && settlement.population > 12 && !settlementHasBuilding(settlement, 'barracks', true) &&
+        isBuildingUnlocked('barracks', worldAge)) {
+      const hex = findFootprintSite(settlement, 'barracks', world.hexMap);
+      if (hex) queueConstruction(settlement, hex, 'barracks', tick, world.hexMap);
+    }
+    if (worldAge >= 2 && settlement.population > 18 && !settlementHasBuilding(settlement, 'guild_hall', true) &&
+        isBuildingUnlocked('guild_hall', worldAge)) {
+      const hex = findFootprintSite(settlement, 'guild_hall', world.hexMap);
+      if (hex) queueConstruction(settlement, hex, 'guild_hall', tick, world.hexMap);
     }
   }
 }

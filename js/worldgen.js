@@ -234,10 +234,13 @@ function placeSettlements(hexMap, rng) {
 
 function startingJobs(tier) {
   const cfg = {
-    town:    { farmer: 4, fisher: 2, guard: 3, merchant: 2, blacksmith: 2, mage: 2, priest: 1, noble: 1, thief: 1, adventurer: 2, clerk: 1 },
-    village: { farmer: 3, fisher: 2, guard: 2, merchant: 1, blacksmith: 1, mage: 1, priest: 1, thief: 1, adventurer: 1, clerk: 1 },
-    hamlet:  { farmer: 2, fisher: 1, guard: 1, merchant: 1, blacksmith: 1, mage: 1, clerk: 1 },
-  }[tier] || { farmer: 2, fisher: 1, guard: 1, clerk: 1 };
+    town:    { farmer: 4, fisher: 2, hunter: 2, guard: 3, watchman: 2, merchant: 2, blacksmith: 2, carpenter: 1,
+               mage: 2, priest: 1, healer: 1, herbalist: 1, noble: 1, thief: 1, spy: 1, adventurer: 2,
+               clerk: 1, bard: 1, brewer: 1, scholar: 1, warlord: 1, ranger: 1, innkeeper: 1, taxcollector: 1 },
+    village: { farmer: 3, fisher: 2, hunter: 1, guard: 2, merchant: 1, blacksmith: 1, healer: 1,
+               mage: 1, priest: 1, thief: 1, adventurer: 1, clerk: 1, brewer: 1, ranger: 1, shepherd: 1 },
+    hamlet:  { farmer: 2, fisher: 1, hunter: 1, guard: 1, merchant: 1, blacksmith: 1, herbalist: 1, clerk: 1 },
+  }[tier] || { farmer: 2, fisher: 1, hunter: 1, guard: 1, clerk: 1 };
   const jobs = [];
   for (const [type, slots] of Object.entries(cfg)) {
     if (slots > 0) jobs.push({ type, slots, filled: 0 });
@@ -247,14 +250,15 @@ function startingJobs(tier) {
 
 export function addJobSlots(settlement, bType) {
   const slots = {
-    farm: [{ type: 'farmer', slots: 2, filled: 0 }],
-    market: [{ type: 'merchant', slots: 1, filled: 0 }],
-    tavern: [{ type: 'clerk', slots: 1, filled: 0 }],
-    barracks: [{ type: 'guard', slots: 2, filled: 0 }],
-    temple: [{ type: 'mage', slots: 1, filled: 0 }, { type: 'priest', slots: 1, filled: 0 }],
-    prison: [{ type: 'guard', slots: 1, filled: 0 }],
-    guild_hall: [{ type: 'adventurer', slots: 2, filled: 0 }],
-    home: [],
+    farm:       [{ type: 'farmer', slots: 2, filled: 0 }, { type: 'shepherd', slots: 1, filled: 0 }],
+    market:     [{ type: 'merchant', slots: 2, filled: 0 }, { type: 'taxcollector', slots: 1, filled: 0 }],
+    tavern:     [{ type: 'innkeeper', slots: 1, filled: 0 }, { type: 'bard', slots: 1, filled: 0 }, { type: 'brewer', slots: 1, filled: 0 }],
+    barracks:   [{ type: 'guard', slots: 3, filled: 0 }, { type: 'warlord', slots: 1, filled: 0 }, { type: 'watchman', slots: 2, filled: 0 }],
+    temple:     [{ type: 'mage', slots: 1, filled: 0 }, { type: 'priest', slots: 2, filled: 0 }, { type: 'healer', slots: 1, filled: 0 }, { type: 'enchanter', slots: 1, filled: 0 }],
+    prison:     [{ type: 'guard', slots: 1, filled: 0 }, { type: 'executioner', slots: 1, filled: 0 }],
+    guild_hall: [{ type: 'adventurer', slots: 3, filled: 0 }, { type: 'ranger', slots: 2, filled: 0 }, { type: 'scholar', slots: 1, filled: 0 }],
+    granary:    [{ type: 'baker', slots: 2, filled: 0 }, { type: 'clerk', slots: 1, filled: 0 }],
+    home:       [],
   };
   if (slots[bType]) settlement.jobs.push(...slots[bType]);
 }

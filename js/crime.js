@@ -1,6 +1,7 @@
 import { EVENT } from './events.js';
 import { payFromWallet, creditWallet } from './currency.js';
 import { hexDistance } from './hex.js';
+import { getPrisonHex } from './construction.js';
 
 export const CRIME_TYPES = ['theft', 'assault', 'murder', 'trespass', 'smuggling', 'illegal_magic', 'bribery'];
 
@@ -69,6 +70,13 @@ function attemptArrest(criminal, agents, world, bus, tick) {
 
   const settlement = world.settlements.find(s => s.id === criminal.settlementId);
   if (settlement) {
+    const prisonHex = getPrisonHex(settlement, world);
+    if (prisonHex) {
+      criminal.q = prisonHex.q;
+      criminal.r = prisonHex.r;
+      criminal.path = null;
+      criminal.currentAction = 'imprisoned';
+    }
     settlement.prisoners = settlement.prisoners || [];
     const lastCrime = criminal.crimes?.[criminal.crimes.length - 1];
     settlement.prisoners.push({
@@ -130,6 +138,14 @@ function processPrisons(agents, world, bus, tick) {
 
       prisoner.sentence = (prisoner.sentence || 0) - 1;
       settlement.foodStore = Math.max(0, settlement.foodStore - 0.5);
+
+      const prisonHex = getPrisonHex(settlement, world);
+      if (prisonHex && (agent.q !== prisonHex.q || agent.r !== prisonHex.r)) {
+        agent.q = prisonHex.q;
+        agent.r = prisonHex.r;
+        agent.path = null;
+        agent.currentAction = 'imprisoned';
+      }
 
       // chance to escape
       if (Math.random() < 0.02) {

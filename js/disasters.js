@@ -1,26 +1,31 @@
 import { hexKey } from './hex.js';
+import { EVENT } from './events.js';
 
-/** Natural disasters: plague, drought, fire, flood */
+/** Natural disasters + extreme weather: plague, drought, fire, flood, blizzard, heatwave, thunderstorm */
 
 export function tickDisasters(world, agents, bus, tick, rng, season) {
   if (tick % 96 !== 0) return;
-  // Higher chance in extreme seasons
   const baseChance = season === 'winter' ? 0.10 : season === 'summer' ? 0.07 : 0.05;
   if (rng.next() > baseChance) return;
 
   const settlement = rng.pick(world.settlements);
   if (!settlement) return;
 
-  const pool = ['plague', 'drought', 'fire', 'flood'];
-  // plague more common in winter, fire in summer
-  const weights = season === 'winter' ? [4, 1, 1, 2] : season === 'summer' ? [1, 3, 4, 1] : [2, 2, 2, 2];
+  const pool    = ['plague', 'drought', 'fire', 'flood', 'blizzard', 'heatwave', 'thunderstorm'];
+  const weights = season === 'winter' ? [3, 1, 1, 2, 5, 0, 1]
+                : season === 'summer' ? [1, 4, 4, 1, 0, 5, 2]
+                : season === 'spring' ? [2, 1, 1, 3, 0, 1, 3]
+                :                       [2, 2, 2, 2, 1, 1, 2];
   const type = _weightedPick(pool, weights, rng);
 
   switch (type) {
-    case 'plague': _plague(settlement, agents, bus, tick, rng); break;
-    case 'drought': _drought(settlement, bus, tick); break;
-    case 'fire': _fire(settlement, world, bus, tick, rng); break;
-    case 'flood': _flood(settlement, bus, tick); break;
+    case 'plague':      _plague(settlement, agents, bus, tick, rng); break;
+    case 'drought':     _drought(settlement, bus, tick); break;
+    case 'fire':        _fire(settlement, world, bus, tick, rng); break;
+    case 'flood':       _flood(settlement, bus, tick); break;
+    case 'blizzard':    _blizzard(settlement, agents, bus, tick, rng); break;
+    case 'heatwave':    _heatwave(settlement, agents, bus, tick); break;
+    case 'thunderstorm':_thunderstorm(settlement, world, bus, tick, rng); break;
   }
 }
 
@@ -70,10 +75,65 @@ function _flood(settlement, bus, tick) {
   bus.emit('disaster', { type: 'flood', settlement: settlement.id, loss, tick });
 }
 
+function _blizzard(settlement, agents, bus, tick, rng) {
+  const residents = agents.filter(a => !a.dead && a.settlementId === settlement.id);
+  let frozen = 0;
+  for (const a of residents) {
+    if (rng.next() < 0.25) {
+      a.health = Math.max(1, a.health - rng.int(10, 30));
+      a.needs && (a.needs.warmth = Math.max(0, (a.needs.warmth || 80) - 40));
+      frozen++;
+    }
+  }
+  const foodLoss = Math.floor((settlement.foodStore || 0) * 0.2);
+  settlement.foodStore = Math.max(0, (settlement.foodStore || 0) - foodLoss);
+  settlement.blizzardTicks = 36;
+  _pushEvent(settlement, `❄ Blizzard! ${frozen} residents freezing, ${foodLoss} food lost`, tick);
+  bus.emit(EVENT.EXTREME_WEATHER, { type: 'blizzard', settlement: settlement.id, tick });
+}
+
+function _heatwave(settlement, agents, bus, tick) {
+  const residents = agents.filter(a => !a.dead && a.settlementId === settlement.id);
+  let parched = 0;
+  for (const a of residents) {
+    if (Math.random() < 0.3) {
+      a.health = Math.max(1, a.health - Math.floor(Math.random() * 15 + 5));
+      a.needs && (a.needs.hunger = Math.max(0, (a.needs.hunger || 80) - 20));
+      parched++;
+    }
+  }
+  const cropLoss = Math.floor((settlement.foodStore || 0) * 0.15);
+  settlement.foodStore = Math.max(0, (settlement.foodStore || 0) - cropLoss);
+  settlement.heatwaveTicks = 48;
+  _pushEvent(settlement, `🔆 Heatwave! ${parched} suffering, crops scorched (−${cropLoss} food)`, tick);
+  bus.emit(EVENT.EXTREME_WEATHER, { type: 'heatwave', settlement: settlement.id, tick });
+}
+
+function _thunderstorm(settlement, world, bus, tick, rng) {
+  // 30% chance to strike a building
+  if (rng.next() < 0.3) {
+    const burnable = settlement.buildings.filter(b => b.completed);
+    if (burnable.length) {
+      const target = rng.pick(burnable);
+      _pushEvent(settlement, `⚡ Lightning struck the ${target.type.replace('_', ' ')}! It caught fire.`, tick);
+      _fire(settlement, world, bus, tick, rng);
+      return;
+    }
+  }
+  const foodLoss = Math.floor((settlement.foodStore || 0) * 0.1);
+  settlement.foodStore = Math.max(0, (settlement.foodStore || 0) - foodLoss);
+  _pushEvent(settlement, `⚡ Thunderstorm battered ${settlement.name}! ${foodLoss} food spoiled.`, tick);
+  bus.emit(EVENT.EXTREME_WEATHER, { type: 'thunderstorm', settlement: settlement.id, tick });
+}
+
 function _pushEvent(settlement, text, tick) {
   settlement.recentEvents = settlement.recentEvents || [];
   settlement.recentEvents.push({ tick, text });
   if (settlement.recentEvents.length > 12) settlement.recentEvents.shift();
+  // Also push to shared events array
+  settlement.events = settlement.events || [];
+  settlement.events.unshift({ text, tick });
+  if (settlement.events.length > 30) settlement.events.length = 30;
 }
 
 function _weightedPick(arr, weights, rng) {

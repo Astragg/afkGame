@@ -1,10 +1,10 @@
-import { RNG, hashSeed } from './rng.js';
+import { RNG, generateRandomSeed, seedFromUrl } from './rng.js';
 import { generateWorld, WORLD_RADIUS } from './worldgen.js';
 import { spawnAgents, getAgentCountForWorld, tickAgents } from './agents.js';
 import { Renderer } from './renderer.js';
 import { pixelToHex, hexToPixel } from './hex.js';
 import { EventBus, EVENT } from './events.js';
-import { tickEconomy, grantJob } from './economy.js?v=7';
+import { tickEconomy, grantJob } from './economy.js?v=12';
 import { tickCrime, pardonAgent } from './crime.js';
 import { initGuilds, joinGuild, tickGuilds } from './guilds.js';
 import { tickSocial, handleDeath } from './social.js';
@@ -12,11 +12,11 @@ import { initWildlife, initLivestock, tickAnimals } from './animals.js';
 import { tickAdventuring } from './adventuring.js';
 import { divineBless, divineCurse } from './magic.js';
 import { grantSkill } from './skills.js';
-import { saveGame, loadGame, exportSave, deserializeAgent } from './save.js';
+import { saveGame, loadGame, exportSave, deserializeAgent, clearSave } from './save.js';
 import { PauseMenu } from './pauseMenu.js';
 import { tickConstruction, initSettlementConstruction, planNewBuildings, resolveBuildingAt } from './construction.js';
 import { loadBuildingSprites } from './textures.js';
-import { createWallet } from './currency.js';
+import { createWallet, creditWallet } from './currency.js';
 import { initKingdoms, tickKingdoms } from './kingdoms.js';
 import { getBuildingInspectData } from './settlementInfo.js';
 import { getSeason, getYear, getDayInSeason, getSeasonLabel } from './seasons.js';
@@ -24,6 +24,18 @@ import { initCaravans, tickCaravans } from './caravans.js';
 import { tickDisasters } from './disasters.js';
 import { initDiplomacy, tickDiplomacy } from './diplomacy.js';
 import { tickSimpleMagic } from './simpleMagic.js';
+import { initQuests, tickQuests } from './quests.js';
+import { initReligion, tickReligion } from './religion.js';
+import { initPolitics, tickPolitics } from './politics.js';
+import { tickDisease } from './disease.js';
+import { initArtifacts, tickArtifacts } from './artifacts.js';
+import { tickReputation } from './reputation.js';
+import { initLanguage, tickLanguage } from './language.js';
+import { initShips, tickShips } from './ships.js';
+import { initAges, tickAges, getAgeLabel } from './ages.js';
+import { initMilestones, tickMilestones, setupMilestoneListeners, MILESTONES } from './milestones.js';
+import { initDynasties, tickDynasties, setupDynastyListeners } from './dynasties.js';
+import { initChronicle, setupChronicleListeners, getAwaySummary, markVisit, getLastVisitTick } from './chronicle.js';
 
 const SPEEDS = [0, 0.25, 0.5, 1, 2, 4, 8, 'step'];
 const SPEED_LABELS = ['Pause', '0.25x', '0.5x', '1x', '2x', '4x', '8x', 'Step'];
@@ -37,7 +49,7 @@ class Game {
     this.renderer = new Renderer(this.canvas);
     this.bus = new EventBus();
     this.pauseMenu = new PauseMenu();
-    this.rng = new RNG(hashSeed('aetherworld'));
+    this.rng = new RNG(generateRandomSeed());
     this.speedIndex = 3;
     this.accumulator = 0;
     this.lastFrame = 0;
@@ -47,23 +59,31 @@ class Game {
     this.crownedId = null;
     this.kingdoms = [];
     this.hoverAgent = null;
+    this.hoverAnimal = null;
     this.mouseX = 0;
     this.mouseY = 0;
     this.keys = {};
     this.dragging = false;
     this.dragStart = { x: 0, y: 0 };
     this.cameraStart = { x: 0, y: 0 };
+    this.milestones = initMilestones();
+    this.dynasties = initDynasties();
+    this.chronicle = initChronicle();
+    this.awaySummary = null;
+    setupChronicleListeners(this.chronicle, this.bus);
+    setupMilestoneListeners(this.milestones, this.bus);
+    setupDynastyListeners(this.dynasties, this.bus);
 
-    this.init();
     this.setupInput();
     this.setupEvents();
+    this.setupAwayTracking();
     loadBuildingSprites();
     window.addEventListener('resize', () => this.renderer.resize());
     requestAnimationFrame(t => this.loop(t));
   }
 
   init(seed) {
-    this.seed = seed ?? hashSeed(String(Date.now()));
+    this.seed = seed ?? generateRandomSeed();
     this.rng = new RNG(this.seed);
     this.world = generateWorld(this.seed, WORLD_RADIUS);
     initSettlementConstruction(this.world.hexMap, this.world.settlements, this.rng, 0);
@@ -76,6 +96,18 @@ class Game {
     this.animals = [...initWildlife(this.world, this.rng), ...initLivestock(this.world.settlements, this.rng)];
     this.world.animals = this.animals;
     this.world.dungeons = this.world.dungeons || [];
+    this.quests = initQuests();
+    this.artifacts = initArtifacts();
+    this.ships = initShips(this.world, this.rng);
+    initReligion(this.world, this.rng);
+    initPolitics(this.world, this.rng);
+    initLanguage(this.world, this.rng);
+    initAges(this.world);
+    this.milestones = initMilestones();
+    this.dynasties = initDynasties();
+    this.chronicle = initChronicle();
+    this.awaySummary = null;
+    markVisit(0);
 
     for (const agent of this.agents) {
       const guild = this.guilds.find(g => g.settlementId === agent.settlementId);
@@ -93,6 +125,83 @@ class Game {
     if (first) this.renderer.centerOn(first.hex.q, first.hex.r);
     this.renderer.camera.zoom = 0.7;
     this.renderer.resize();
+    this.renderer.bakedFor = null;
+  }
+
+  newWorld(seed) {
+    clearSave();
+    this.inspectAgent = null;
+    this.inspectBuilding = null;
+    this.renderer.selectedAgent = null;
+    this.renderer.selectedBuilding = null;
+    this.pauseMenu.close();
+    this.init(seed ?? generateRandomSeed());
+    this.paused = false;
+    this.speedIndex = 3;
+  }
+
+  loadFromSave(saved) {
+    this.seed = saved.seed;
+    this.tick = saved.tick;
+    this.day = saved.day;
+    this.timeOfDay = saved.timeOfDay;
+    this.weather = saved.weather;
+    this.rng = new RNG(this.seed);
+    this.world = generateWorld(this.seed, WORLD_RADIUS);
+    initSettlementConstruction(this.world.hexMap, this.world.settlements, this.rng, this.tick);
+    this.agents = saved.agents.map(a => {
+      const agent = deserializeAgent(a);
+      if (!agent.wallet) agent.wallet = createWallet(0, agent.gold || 10, 0, 0, 0);
+      return agent;
+    });
+    this.world._agents = this.agents;
+    this.guilds = saved.guilds || initGuilds(this.world);
+    this.kingdoms = initDiplomacy(initKingdoms(this.world.settlements));
+    this.caravans = saved.caravans || initCaravans();
+    this.animals = saved.animals || [...initWildlife(this.world, this.rng), ...initLivestock(this.world.settlements, this.rng)];
+    this.world.animals = this.animals;
+    this.quests = saved.quests || initQuests();
+    this.artifacts = saved.artifacts || initArtifacts();
+    this.ships = saved.ships || initShips(this.world, this.rng);
+    initReligion(this.world, this.rng);
+    initPolitics(this.world, this.rng);
+    initLanguage(this.world, this.rng);
+    initAges(this.world);
+    this.milestones = saved.milestones || initMilestones();
+    this.dynasties = saved.dynasties || initDynasties();
+    this.chronicle = saved.chronicle || initChronicle();
+    if (saved.worldAge != null) {
+      this.world.age = saved.worldAge;
+      this.world.ageName = saved.worldAgeName;
+    }
+    this.crownedId = saved.crownedId;
+    for (const a of this.agents) if (a.id === this.crownedId) a.crowned = true;
+    const first = this.world.settlements[0];
+    if (first) this.renderer.centerOn(first.hex.q, first.hex.r);
+    this.renderer.resize();
+    this.renderer.bakedFor = null;
+  }
+
+  setupAwayTracking() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        markVisit(this.tick || 0);
+      } else if (this.chronicle && this.tick) {
+        const summary = getAwaySummary(this.chronicle, this.tick);
+        if (summary) this.awaySummary = summary;
+      }
+    });
+    window.addEventListener('focus', () => {
+      if (this.chronicle && this.tick) {
+        const summary = getAwaySummary(this.chronicle, this.tick);
+        if (summary) this.awaySummary = summary;
+      }
+    });
+  }
+
+  dismissAwaySummary() {
+    this.awaySummary = null;
+    markVisit(this.tick || 0);
   }
 
   setupEvents() {
@@ -122,6 +231,7 @@ class Game {
       this.renderer.hoverHex = tile;
       this.renderer.hoverBuilding = tile?.building || null;
       this.hoverAgent = tile?.building ? null : this.renderer.hitTestAgent(this.agents, e.clientX, e.clientY);
+      this.hoverAnimal = this.hoverAgent ? null : this.renderer.hitTestAnimal(this.animals || [], e.clientX, e.clientY);
       if (this.dragging) {
         const dx = (e.clientX - this.dragStart.x) / this.renderer.camera.zoom;
         const dy = (e.clientY - this.dragStart.y) / this.renderer.camera.zoom;
@@ -131,9 +241,10 @@ class Game {
     });
 
     this.canvas.addEventListener('mousedown', e => {
+      if (this.awaySummary) { this.dismissAwaySummary(); return; }
       if (this.pauseMenu.open) {
         const hit = this.pauseMenu.hitTest(e.clientX, e.clientY, this.canvas.width, this.canvas.height);
-        this.pauseMenu.handleClick(hit);
+        this.pauseMenu.handleClick(hit, this);
         return;
       }
       if (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey)) {
@@ -212,6 +323,7 @@ class Game {
       if (e.key === '1') this.setSpeed(3);
       if (e.key === 's' && e.ctrlKey) { e.preventDefault(); saveGame(this.getState()); }
       if (e.key === 'e' && e.ctrlKey) { e.preventDefault(); exportSave(this.getState()); }
+      if (e.key === 'n' && e.ctrlKey && e.shiftKey) { e.preventDefault(); this.newWorld(); }
     });
     window.addEventListener('keyup', e => { this.keys[e.key] = false; });
   }
@@ -235,18 +347,25 @@ class Game {
       timeOfDay: this.timeOfDay, weather: this.weather,
       agents: this.agents, world: this.world,
       guilds: this.guilds, crownedId: this.crownedId,
+      milestones: this.milestones, dynasties: this.dynasties,
+      chronicle: this.chronicle,
+      worldAge: this.world?.age, worldAgeName: this.world?.ageName,
     };
   }
 
   getDivineButtons() {
     if (!this.inspectAgent) return [];
     return [
-      { label: 'Crown', action: 'crown' },
-      { label: 'Bless', action: 'bless' },
-      { label: 'Curse', action: 'curse' },
-      { label: 'Pardon', action: 'pardon' },
-      { label: 'Skill+', action: 'skill' },
-      { label: 'Grant Job', action: 'job' },
+      { label: '♛ Crown',     action: 'crown' },
+      { label: '✨ Bless',    action: 'bless' },
+      { label: '💀 Smite',    action: 'smite' },
+      { label: '🔮 Curse',    action: 'curse' },
+      { label: '⚖ Pardon',   action: 'pardon' },
+      { label: '📚 Skill+',   action: 'skill' },
+      { label: '💰 Drop Gold',action: 'gold' },
+      { label: '🏥 Heal',     action: 'heal' },
+      { label: '⚔ Arm',      action: 'arm' },
+      { label: '🌟 Make Hero',action: 'hero' },
     ];
   }
 
@@ -268,15 +387,53 @@ class Game {
         this.crownedId = agent.id;
         agent.addEvent(this.tick, 'Crowned by divine will');
         break;
-      case 'bless': divineBless(agent, this.tick); break;
+      case 'bless':
+        divineBless(agent, this.tick);
+        agent.health = Math.min(100, (agent.health || 80) + 20);
+        break;
+      case 'smite':
+        agent.health = Math.max(0, (agent.health || 80) - 60);
+        agent.addEvent(this.tick, '⚡ Struck down by divine wrath!');
+        if (agent.health <= 0) { agent.dead = true; agent.causeOfDeath = 'smited'; }
+        this.bus.emit(EVENT.GOD_ACT, { action: 'smite', agent, tick: this.tick });
+        break;
       case 'curse': divineCurse(agent, this.tick); break;
       case 'pardon':
         pardonAgent(agent, this.world);
+        agent.wantedLevel = 0;
+        agent.imprisoned = false;
         agent.addEvent(this.tick, 'Pardoned by divine decree');
         break;
-      case 'skill':
-        grantSkill(agent, 'leadership', 'govern', Math.min(10, (agent.skills['leadership.govern'] || 0) + 1));
-        agent.addEvent(this.tick, 'Granted leadership skill');
+      case 'skill': {
+        const skillKeys = Object.keys(agent.skills || {});
+        const key = skillKeys[Math.floor(Math.random() * skillKeys.length)] || 'leadership.govern';
+        const [br, sk] = key.split('.');
+        if (br && sk) grantSkill(agent, br, sk, (agent.skills[key] || 0) + 5);
+        agent.addEvent(this.tick, `Divine gift: ${key} increased`);
+        break;
+      }
+      case 'gold':
+        creditWallet(agent.wallet, 100);
+        agent.addEvent(this.tick, 'Gold rained from the heavens (+100s)');
+        break;
+      case 'heal':
+        agent.health = 100;
+        agent.disease = null;
+        agent.starvationTicks = 0;
+        agent.addEvent(this.tick, '✨ Healed by divine power');
+        this.bus.emit(EVENT.GOD_ACT, { action: 'heal', agent, tick: this.tick });
+        break;
+      case 'arm':
+        grantSkill(agent, 'combat', 'melee', Math.min(30, (agent.skills['combat.melee'] || 0) + 10));
+        grantSkill(agent, 'combat', 'tactics', Math.min(30, (agent.skills['combat.tactics'] || 0) + 8));
+        agent.addEvent(this.tick, '⚔ Armed and trained by divine will');
+        break;
+      case 'hero':
+        agent.fame = (agent.fame || 0) + 200;
+        agent.health = 100;
+        for (const k of Object.keys(agent.skills || {})) agent.skills[k] = Math.max(agent.skills[k] || 0, 15);
+        agent.addEvent(this.tick, '🌟 Ascended to legendary hero status!');
+        this.bus.emit(EVENT.LEGEND_BORN, { agent, tick: this.tick });
         break;
       case 'job': {
         const s = this.world.settlements.find(x => x.id === agent.settlementId);
@@ -318,6 +475,17 @@ class Game {
     this._run('caravans', () => { this.caravans = tickCaravans(this.caravans, this.world, this.agents, this.bus, this.tick); });
     this._run('disasters', () => tickDisasters(this.world, this.agents, this.bus, this.tick, this.rng, season));
     this._run('magic', () => tickSimpleMagic(this.agents, this.world, this.bus, this.tick));
+    this._run('quests', () => { this.quests = tickQuests(this.quests, this.world, this.agents, this.bus, this.tick); });
+    this._run('religion', () => tickReligion(this.world, this.agents, this.bus, this.tick, this.rng));
+    this._run('politics', () => tickPolitics(this.world, this.agents, this.bus, this.tick, this.rng));
+    this._run('disease', () => tickDisease(this.agents, this.world, this.bus, this.tick, this.rng));
+    this._run('artifacts', () => tickArtifacts(this.artifacts, this.world, this.agents, this.bus, this.tick, this.rng));
+    this._run('reputation', () => tickReputation(this.agents, this.world, this.bus, this.tick));
+    this._run('language', () => tickLanguage(this.world, this.agents, this.bus, this.tick));
+    this._run('ships', () => tickShips(this.ships, this.world, this.agents, this.bus, this.tick, this.rng));
+    this._run('ages', () => tickAges(this.world, this.agents, this.kingdoms, this.artifacts, this.guilds, this.bus, this.tick, this.day));
+    this._run('milestones', () => tickMilestones(this.milestones, this.world, this.agents, this.kingdoms, this.artifacts, this.guilds, this.bus, this.tick, this.day));
+    this._run('dynasties', () => tickDynasties(this.dynasties, this.world, this.agents, this.bus, this.tick, this.milestones));
 
     // periodically remove dead agents so arrays don't grow without bound
     if (this.tick % 240 === 0) this.purgeDead();
@@ -398,7 +566,11 @@ class Game {
       inspectBuilding: this.inspectBuilding,
       animals: this.animals,
       caravans: this.caravans,
+      ships: this.ships,
+      quests: this.quests,
+      artifacts: this.artifacts,
       hoverAgent: this.hoverAgent,
+      hoverAnimal: this.hoverAnimal,
       mouseX: this.mouseX,
       mouseY: this.mouseY,
       divineButtons,
@@ -419,24 +591,15 @@ class Game {
 }
 
 const saved = loadGame();
+const urlSeed = seedFromUrl();
 const game = new Game();
-if (saved) {
-  game.seed = saved.seed;
-  game.tick = saved.tick;
-  game.day = saved.day;
-  game.timeOfDay = saved.timeOfDay;
-  game.weather = saved.weather;
-  game.world = generateWorld(saved.seed, WORLD_RADIUS);
-  game.agents = saved.agents.map(a => {
-    const agent = deserializeAgent(a);
-    if (!agent.wallet) agent.wallet = createWallet(0, agent.gold || 10, 0, 0, 0);
-    return agent;
-  });
-  game.world._agents = game.agents;
-  game.guilds = saved.guilds || initGuilds(game.world);
-  game.kingdoms = initKingdoms(game.world.settlements);
-  game.crownedId = saved.crownedId;
-  for (const a of game.agents) if (a.id === game.crownedId) a.crowned = true;
+if (urlSeed != null) {
+  game.newWorld(urlSeed);
+} else if (saved) {
+  game.loadFromSave(saved);
+} else {
+  game.init();
 }
+markVisit(game.tick || 0);
 
 window.aetherworld = game;
