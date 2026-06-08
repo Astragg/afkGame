@@ -213,12 +213,37 @@ const SPRITE_FILES = {
 const BUILDING_SPRITES = {};
 let spritesReady = false;
 
+function stripWhiteBackground(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const cx = c.getContext('2d');
+  cx.drawImage(img, 0, 0);
+  const data = cx.getImageData(0, 0, c.width, c.height);
+  const px = data.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i] > 245 && px[i + 1] > 245 && px[i + 2] > 245) px[i + 3] = 0;
+  }
+  cx.putImageData(data, 0, 0);
+  const clean = new Image();
+  clean.src = c.toDataURL('image/png');
+  return new Promise(resolve => {
+    clean.onload = () => resolve(clean);
+    clean.onerror = () => resolve(img);
+  });
+}
+
 export function loadBuildingSprites() {
   if (spritesReady) return Promise.resolve();
   const entries = Object.entries(SPRITE_FILES);
   return Promise.all(entries.map(([type, path]) => new Promise(resolve => {
     const img = new Image();
-    img.onload = () => { BUILDING_SPRITES[type] = img; resolve(); };
+    img.onload = () => {
+      stripWhiteBackground(img).then(clean => {
+        BUILDING_SPRITES[type] = clean;
+        resolve();
+      });
+    };
     img.onerror = () => resolve();
     img.src = path;
   }))).then(() => { spritesReady = true; });
@@ -230,13 +255,16 @@ const FOOTPRINT_SCALE = {
   granary: 1.8, home: 1.6,
 };
 
-/** Draw a building spanning multiple hex tiles */
+/** Draw a building spanning multiple hex tiles.
+ *  cx,cy is the front-bottom center of the footprint (highest screen-y row).
+ *  The sprite is drawn so its base aligns with cy (building sits ON the hex grid). */
 export function drawBuildingSprite(ctx, cx, cy, hexSize, type, footprintSize = 1) {
   const scale = FOOTPRINT_SCALE[type] || 1.5;
   const w = hexSize * scale * Math.max(1, Math.sqrt(footprintSize));
   const h = w * 0.85;
   const x = cx - w / 2;
-  const y = cy - h * 0.92;
+  // cy is the front-row center; draw the sprite so its bottom sits at cy
+  const y = cy - h;
 
   const sprite = BUILDING_SPRITES[type];
   if (sprite?.complete && sprite.naturalWidth) {

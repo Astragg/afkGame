@@ -2,7 +2,7 @@ import { RNG } from './rng.js';
 import { findPath, hexKey, hexNeighbors, getMoveCost } from './hex.js';
 import { RACE_LIST, RACES, generateName, generatePersonality } from './races.js';
 import { createSkills, SKILL_BRANCHES, RACE_SKILL_DEPTH, addSkillXP } from './skills.js';
-import { hireAgent, jobSuitability } from './economy.js?v=3';
+import { hireAgent, jobSuitability } from './economy.js?v=7';
 import { executeConquer } from './kingdoms.js';
 import { commitCrime } from './crime.js';
 import { assignQuest } from './guilds.js';

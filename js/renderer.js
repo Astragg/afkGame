@@ -146,6 +146,11 @@ export class Renderer {
       ctx.fillRect(0, 0, w, h);
     }
 
+    // seasonal tint
+    const seasonTints = { spring: 'rgba(60,120,30,0.06)', autumn: 'rgba(140,70,10,0.09)', winter: 'rgba(160,190,220,0.14)' };
+    const seasonTint = seasonTints[ui?.season];
+    if (seasonTint) { ctx.fillStyle = seasonTint; ctx.fillRect(0, 0, w, h); }
+
     const size = this.hexSize * zoom;
 
     // hover hex highlight (skip when hovering a building — footprint highlight handles that)
@@ -160,13 +165,16 @@ export class Renderer {
 
     // buildings + construction + dungeons (bounded iteration)
     this._drawStructures(ctx, world, size, w, h);
-    this._drawBuildingHighlight(ctx, world, size, w, h);
+    this._drawBuildingHighlight(ctx, world, size, w, h, ui);
+
+    // caravans
+    if (ui?.caravans?.length) this._drawCaravans(ctx, ui.caravans, size, w, h);
 
     // animals (culled)
     if (ui?.animals?.length) this._drawAnimals(ctx, ui.animals, size, w, h);
 
     // agents (culled)
-    this._drawAgents(ctx, agents, size, w, h);
+    this._drawAgents(ctx, agents, size, w, h, ui?.tick || 0);
 
     // weather fx
     if (weather === 'rain' || weather === 'storm') this.drawWeatherParticles(weather);
@@ -216,7 +224,7 @@ export class Renderer {
         if (anchorHex?.building?.isAnchor === false) continue;
         drawn.add(key);
         const fp = getFootprint(b.type);
-        const center = footprintCenter(b.hex, fp, this.hexSize);
+        const center = footprintFrontCenter(b.hex, fp, this.hexSize);
         if (!this._onScreen(center.x, center.y, w, h, margin)) continue;
         const scr = this.worldToScreen(center.x, center.y);
         drawBuildingSprite(ctx, scr.x, scr.y, size, b.type, fp.length);
@@ -226,7 +234,7 @@ export class Renderer {
         if (drawn.has(key)) continue;
         drawn.add(key);
         const fp = getFootprint(site.type);
-        const center = footprintCenter(site.hex, fp, this.hexSize);
+        const center = footprintFrontCenter(site.hex, fp, this.hexSize);
         if (!this._onScreen(center.x, center.y, w, h, margin)) continue;
         const scr = this.worldToScreen(center.x, center.y);
         drawConstructionSite(ctx, scr.x, scr.y, size, site.type, site.progress / site.totalTicks);
@@ -251,7 +259,7 @@ export class Renderer {
     }
   }
 
-  _drawBuildingHighlight(ctx, world, size, w, h) {
+  _drawBuildingHighlight(ctx, world, size, w, h, ui) {
     const target = this.selectedBuilding || (this.hoverBuilding ? this.hoverHex : null);
     if (!target?.building) return;
     const type = target.building.type;
@@ -259,7 +267,7 @@ export class Renderer {
     const anchorR = target.building.anchorR ?? target.r;
     const fp = getFootprint(type);
     ctx.save();
-    ctx.strokeStyle = ui?.selectedBuilding ? 'rgba(255,225,90,0.95)' : 'rgba(140,200,255,0.75)';
+    ctx.strokeStyle = this.selectedBuilding ? 'rgba(255,225,90,0.95)' : 'rgba(140,200,255,0.75)';
     ctx.lineWidth = 2.5;
     for (const [dq, dr] of fp) {
       const p = hexToPixel(anchorQ + dq, anchorR + dr, this.hexSize);
@@ -269,6 +277,30 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  _drawCaravans(ctx, caravans, size, w, h) {
+    const margin = size * 3;
+    for (const c of caravans) {
+      const p = hexToPixel(c.q, c.r, this.hexSize);
+      if (!this._onScreen(p.x, p.y, w, h, margin)) continue;
+      const scr = this.worldToScreen(p.x, p.y);
+      const r = size * 0.18;
+      // wagon body
+      ctx.fillStyle = c.goods === 'food' ? '#c8a040' : '#a06828';
+      ctx.strokeStyle = '#3a2010';
+      ctx.lineWidth = 1;
+      ctx.fillRect(scr.x - r, scr.y - r * 0.6, r * 2, r * 1.2);
+      ctx.strokeRect(scr.x - r, scr.y - r * 0.6, r * 2, r * 1.2);
+      // wheels
+      ctx.fillStyle = '#5a3a18';
+      for (const wx of [scr.x - r * 0.5, scr.x + r * 0.5]) {
+        ctx.beginPath(); ctx.arc(wx, scr.y + r * 0.5, r * 0.35, 0, Math.PI * 2); ctx.fill();
+      }
+      // goods label dot
+      ctx.fillStyle = c.goods === 'food' ? '#60c040' : '#e0c060';
+      ctx.beginPath(); ctx.arc(scr.x, scr.y - r * 0.2, r * 0.25, 0, Math.PI * 2); ctx.fill();
+    }
   }
 
   _drawAnimals(ctx, animals, size, w, h) {
@@ -294,7 +326,7 @@ export class Renderer {
     }
   }
 
-  _drawAgents(ctx, agents, size, w, h) {
+  _drawAgents(ctx, agents, size, w, h, tick = 0) {
     const margin = size * 2;
     const r = size * 0.34;
     for (const agent of agents) {
@@ -304,6 +336,19 @@ export class Renderer {
       if (scr.x < -margin || scr.x > w + margin || scr.y < -margin || scr.y > h + margin) continue;
       const cx = scr.x, cy = scr.y - size * 0.5;
       const isSel = this.selectedAgent?.id === agent.id;
+
+      // Mage spell glow — cheap radial, skipped if tiny
+      if (agent.spellGlow && tick - agent.spellGlow.tick < 30 && size > 4) {
+        const alpha = 1 - (tick - agent.spellGlow.tick) / 30;
+        const glowColor = agent.spellGlow.spell === 'Bolt' ? `rgba(80,160,255,${alpha * 0.55})` :
+                          agent.spellGlow.spell === 'Heal' ? `rgba(80,220,120,${alpha * 0.55})` :
+                          `rgba(180,120,255,${alpha * 0.5})`;
+        const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 3);
+        gr.addColorStop(0, glowColor);
+        gr.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gr;
+        ctx.beginPath(); ctx.arc(cx, cy, r * 3, 0, Math.PI * 2); ctx.fill();
+      }
 
       // soft shadow
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -318,6 +363,15 @@ export class Renderer {
       ctx.strokeStyle = isSel ? '#ffe14a' : 'rgba(20,24,36,0.9)';
       ctx.lineWidth = isSel ? 2.5 : 1;
       ctx.stroke();
+
+      // Social class ring — nobles get gold ring, merchants get silver
+      if (agent.socialClass === 'noble' && size > 5) {
+        ctx.beginPath(); ctx.arc(cx, cy, r + 1.5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,210,60,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
+      } else if (agent.socialClass === 'merchant' && size > 6) {
+        ctx.beginPath(); ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(180,200,220,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+      }
 
       if (agent.crowned) {
         ctx.fillStyle = THEME.accentWarm;
@@ -379,7 +433,7 @@ export class Renderer {
     const living = agents.filter(a => !a.dead).length;
 
     // Top-left main panel
-    panel(ctx, pad, pad, 252, 116);
+    panel(ctx, pad, pad, 252, 128);
     accentBar(ctx, pad, pad, 252);
     ctx.textAlign = 'left';
     // logo diamond
@@ -403,6 +457,12 @@ export class Renderer {
     ctx.font = '12px "Segoe UI", sans-serif';
     ctx.fillStyle = THEME.dim;
     ctx.fillText(`Day ${ui?.day || 1}`, pad + 80, pad + 64);
+    // season label
+    if (ui?.season) {
+      const sLabel = { spring: '🌱 Spring', summer: '☀ Summer', autumn: '🍂 Autumn', winter: '❄ Winter' };
+      ctx.fillStyle = ui.season === 'winter' ? '#a8c8e8' : ui.season === 'autumn' ? '#d09050' : ui.season === 'spring' ? '#80c060' : '#f0d060';
+      ctx.fillText(sLabel[ui.season] || ui.season, pad + 80, pad + 75);
+    }
 
     drawWeatherIcon(ctx, pad + 132, pad + 56, 11, weather);
     ctx.fillStyle = THEME.dim;
@@ -419,7 +479,7 @@ export class Renderer {
     // settlement spotlight
     if (world.settlements?.length) {
       const s = world.settlements.reduce((a, b) => (b.population > a.population ? b : a), world.settlements[0]);
-      const sy = pad + 128;
+      const sy = pad + 142;
       panel(ctx, pad, sy, 252, 70);
       ctx.fillStyle = THEME.accent;
       ctx.font = '700 13px "Segoe UI", sans-serif';
@@ -656,8 +716,10 @@ export class Renderer {
   drawBuildingPanel(data, ui) {
     if (!data) return;
     const ctx = this.ctx;
-    const pw = 300, ph = Math.min(420, this.canvas.height - 48);
-    const px = 16, py = 20;
+    const pw = 280, ph = Math.min(400, this.canvas.height - 48);
+    // Place right of minimap column, below minimap, so it never overlaps the HUD
+    const px = this.canvas.width - pw - 16;
+    const py = 14 + 150 + 12; // top-pad + minimap height + gap
     panel(ctx, px, py, pw, ph);
     accentBar(ctx, px, py, pw, '#6a88c0');
     ctx.textAlign = 'left';
@@ -751,6 +813,19 @@ function footprintCenter(anchor, footprint, hexSize) {
   }
   const n = footprint.length || 1;
   return { x: sx / n, y: sy / n };
+}
+
+/**
+ * Returns the pixel center of the "front" (highest screen-y) row of footprint hexes.
+ * Isometric building sprites should be drawn with their base anchored here.
+ */
+function footprintFrontCenter(anchor, footprint, hexSize) {
+  let maxY = -Infinity;
+  const points = footprint.map(([dq, dr]) => hexToPixel(anchor.q + dq, anchor.r + dr, hexSize));
+  for (const p of points) if (p.y > maxY) maxY = p.y;
+  const front = points.filter(p => p.y >= maxY - 1);
+  const sx = front.reduce((s, p) => s + p.x, 0) / front.length;
+  return { x: sx, y: maxY };
 }
 
 // ---------- shared draw helpers ----------

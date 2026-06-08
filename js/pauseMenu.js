@@ -1,5 +1,6 @@
 import { computeRankings } from './rankings.js';
 import { formatWallet } from './currency.js';
+import { getSeason, getYear, getDayInSeason, getSeasonLabel } from './seasons.js';
 
 const TABS = ['Overview', 'Rankings', 'Families', 'Settlements'];
 
@@ -11,7 +12,8 @@ export class PauseMenu {
     this.rankCategory = 'swordsman';
     this.selectedFamily = 0;
     this.selectedSettlement = 0;
-    this.bounds = { tabs: [], close: null, categories: [], settlements: [] };
+    this.bounds = { tabs: [], close: null, categories: [], settlements: [], agentRows: [] };
+    this._pendingJump = null;
   }
 
   toggle() {
@@ -42,6 +44,11 @@ export class PauseMenu {
       const s = b.settlements[i];
       if (mx >= s.x && mx <= s.x + s.w && my >= s.y && my <= s.y + s.h) return { action: 'settlement', index: i };
     }
+    for (const row of b.agentRows || []) {
+      if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
+        return { action: 'jumpToAgent', id: row.id };
+      }
+    }
     if (mx >= b.panel.x && mx <= b.panel.x + b.panel.w && my >= b.panel.y && my <= b.panel.y + b.panel.h) {
       return { action: 'panel' };
     }
@@ -54,11 +61,13 @@ export class PauseMenu {
     if (hit.action === 'tab') { this.tab = hit.index; this.scroll = 0; return true; }
     if (hit.action === 'category') { this.rankCategory = hit.key; this.scroll = 0; return true; }
     if (hit.action === 'settlement') { this.selectedSettlement = hit.index; this.scroll = 0; return true; }
+    if (hit.action === 'jumpToAgent') { this._pendingJump = hit.id; this.close(); return true; }
     return true;
   }
 
   draw(ctx, canvasW, canvasH, game) {
     if (!this.open) return;
+    this.bounds.agentRows = [];
     const rankings = computeRankings(game.agents, game.world, game.kingdoms);
 
     ctx.fillStyle = 'rgba(5,8,18,0.88)';
@@ -130,15 +139,23 @@ export class PauseMenu {
 
   drawOverview(ctx, px, y, pw, rankings, game) {
     const ws = rankings.worldStats;
+    const season = getSeason(game.day);
+    const year = getYear(game.day);
+    const dayInSeason = getDayInSeason(game.day);
+    const seasonLabel = getSeasonLabel(season);
+    const alliances = (game.kingdoms || []).reduce((n, k) => n + (k.allies?.length || 0), 0) / 2;
+    const atWar = (game.kingdoms || []).filter(k => (k.atWar?.length || 0) > 0).length;
+
     const lines = [
       ['World Size', `${ws.hexes.toLocaleString()} hexes`],
       ['Population', `${ws.agents} living / ${ws.dead} dead`],
       ['Settlements', `${ws.settlements}`],
-      ['Dungeons', `${ws.dungeons}`],
-      ['Homeless', `${ws.homeless} sleeping in the wild`],
-      ['Day', `${game.day} — ${formatTime(game.timeOfDay)}`],
+      ['Homeless', `${ws.homeless} sleeping rough`],
+      ['Season', `${seasonLabel} — Year ${year}, Day ${dayInSeason}`],
       ['Weather', game.weather],
-      ['Tick', `${game.tick}`],
+      ['Alliances', `${Math.floor(alliances)} active pacts`],
+      ['At War', atWar > 0 ? `${atWar} kingdoms in conflict` : 'Peace'],
+      ['Day', `${game.day} (${formatTime(game.timeOfDay)})`],
     ];
     let cy = y + 10;
     ctx.fillStyle = '#a0c0e8';
@@ -152,18 +169,18 @@ export class PauseMenu {
       ctx.fillText(label + ':', px + 32, cy);
       ctx.fillStyle = '#d0e8ff';
       ctx.fillText(val, px + 180, cy);
-      cy += 22;
+      cy += 20;
     }
 
-    cy += 16;
+    cy += 14;
     ctx.fillStyle = '#a0c0e8';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText('Champions', px + 24, cy);
-    cy += 24;
+    ctx.fillText('Champions  (click to follow)', px + 24, cy);
+    cy += 22;
     const champs = [
       ['Strongest Swordsman', rankings.swordsman[0]],
       ['Greatest Mage', rankings.mage[0]],
-      ['Ruler / Queen / King', rankings.ruler[0]],
+      ['King / Queen', rankings.ruler[0]],
       ['Most Advanced', rankings.advanced[0]],
       ['Most Evil', rankings.evil[0]],
       ['Wealthiest', rankings.wealthy[0]],
@@ -171,11 +188,19 @@ export class PauseMenu {
     for (const [title, champ] of champs) {
       ctx.fillStyle = '#8098b8';
       ctx.font = '12px sans-serif';
-      ctx.fillText(title, px + 32, cy);
+      ctx.fillText(title + ':', px + 32, cy);
       if (champ) {
+        // Clickable champion row
+        const rx = px + 210, rw = pw - 240;
+        roundRect(ctx, rx - 4, cy - 13, rw, 18, 4);
+        ctx.fillStyle = 'rgba(60,80,120,0.35)';
+        ctx.fill();
         ctx.fillStyle = champ.crowned ? '#ffd878' : '#c8e0ff';
+        ctx.font = '600 12px "Segoe UI", sans-serif';
         const crown = champ.crowned ? ' ♛' : '';
-        ctx.fillText(`${champ.name} (${champ.race}) — ${champ.score}${crown}`, px + 220, cy);
+        ctx.fillText(`${champ.name} (${champ.race}) ${champ.score}${crown}`, rx, cy);
+        this.bounds.agentRows = this.bounds.agentRows || [];
+        this.bounds.agentRows.push({ x: rx - 4, y: cy - 13, w: rw, h: 18, id: champ.id });
       }
       cy += 20;
     }
@@ -209,6 +234,13 @@ export class PauseMenu {
     let ly = y + 92 - this.scroll;
     ctx.textAlign = 'left';
     for (const entry of list) {
+      // Hover highlight + click target
+      roundRect(ctx, px + 14, ly - 14, pw - 28, 20, 4);
+      ctx.fillStyle = 'rgba(60,80,130,0.25)';
+      ctx.fill();
+      this.bounds.agentRows = this.bounds.agentRows || [];
+      this.bounds.agentRows.push({ x: px + 14, y: ly - 14, w: pw - 28, h: 20, id: entry.id });
+
       ctx.fillStyle = entry.crowned ? '#ffd878' : '#cdddf6';
       ctx.font = '600 13px "Segoe UI", sans-serif';
       const crown = entry.crowned ? ' ♛' : '';
@@ -218,6 +250,12 @@ export class PauseMenu {
       ctx.font = '11px "Segoe UI", sans-serif';
       ctx.textAlign = 'right';
       ctx.fillText(`${entry.race} · ${entry.detail} · ${entry.score}${crown}`, px + 700, ly);
+      ctx.textAlign = 'left';
+      // Hint
+      ctx.fillStyle = 'rgba(120,160,220,0.6)';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('click → follow', px + pw - 20, ly);
       ctx.textAlign = 'left';
       ly += 24;
     }

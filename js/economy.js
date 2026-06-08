@@ -16,9 +16,9 @@ export const JOB_TYPES = {
   noble: { wage: 35, skill: 'leadership.govern', produces: null },
 };
 
-export function tickEconomy(world, agents, bus, tick) {
+export function tickEconomy(world, agents, bus, tick, season) {
   for (const settlement of world.settlements) {
-    tickSettlementEconomy(settlement, agents, world, bus, tick);
+    tickSettlementEconomy(settlement, agents, world, bus, tick, season);
   }
 }
 
@@ -27,18 +27,28 @@ function getTreasury(settlement) {
   return settlement.treasuryWallet;
 }
 
-function tickSettlementEconomy(settlement, agents, world, bus, tick) {
+function tickSettlementEconomy(settlement, agents, world, bus, tick, season) {
   const residents = agents.filter(a => !a.dead && a.settlementId === settlement.id);
   settlement.population = residents.length;
   settlement.unemployment = residents.filter(a => !a.job).length;
   const treasury = getTreasury(settlement);
+
+  // Seasonal food multiplier + drought penalty
+  const seasonMult = season === 'summer' ? 1.6 : season === 'spring' ? 1.3 : season === 'winter' ? 0.35 : 1.0;
+  if (settlement.droughtTicks > 0) {
+    settlement.droughtTicks--;
+  }
+  const droughtPenalty = settlement.droughtTicks > 0 ? 0.5 : 1.0;
+  const foodMult = seasonMult * droughtPenalty;
 
   for (const jobDef of settlement.jobs) {
     const info = JOB_TYPES[jobDef.type];
     if (!info) continue;
     const workers = residents.filter(a => a.job === jobDef.type);
     for (const worker of workers) {
-      const wage = info.wage;
+      // Nobles get bonus wage, peasants get baseline
+      const classBonus = worker.socialClass === 'noble' ? 1.4 : worker.socialClass === 'merchant' ? 1.15 : 1.0;
+      const wage = Math.round(info.wage * classBonus);
       if ((treasury.silver || 0) + (treasury.gold || 0) * 100 >= wage) {
         if (treasury.silver >= wage) treasury.silver -= wage;
         else { treasury.gold -= 1; treasury.silver += 100 - wage; }
@@ -47,7 +57,7 @@ function tickSettlementEconomy(settlement, agents, world, bus, tick) {
         worker.addEvent(tick, `Earned ${wage}s as ${jobDef.type}`);
       }
       if (jobDef.type === 'farmer' && tick % 24 === 0) {
-        const yield_ = 8 + (worker.skills?.['survival.farm'] || 0) * 2;
+        const yield_ = Math.floor((8 + (worker.skills?.['survival.farm'] || 0) * 2) * foodMult);
         settlement.foodStore += yield_;
         worker.addEvent(tick, `Harvested ${yield_} food`);
         addSkillXP(worker, 'survival', 'farm', 10);

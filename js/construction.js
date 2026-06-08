@@ -37,7 +37,7 @@ export function footprintFits(anchor, type, hexMap, settlementId) {
   for (const [dq, dr] of getFootprint(type)) {
     const hex = hexMap.get(hexKey(anchor.q + dq, anchor.r + dr));
     if (!hex?.walkable || hex.dungeon) return false;
-    if (hex.building && !hex.building.underConstruction) return false;
+    if (hex.building) return false;
     if (hex.settlementId && hex.settlementId !== settlementId) return false;
   }
   return true;
@@ -242,28 +242,24 @@ export function initSettlementConstruction(hexMap, settlements, rng, tick = 0) {
       settlement.buildings.push({ type: 'town_center', hex: { ...settlement.hex }, completed: true, footprint: 'town_center' });
     }
 
-    const candidates = [];
-    for (const hex of hexMap.values()) {
-      if (hex.settlementId === settlement.id && hex.walkable && !hex.building &&
-          (hex.q !== settlement.hex.q || hex.r !== settlement.hex.r)) {
-        candidates.push(hex);
-      }
-    }
-    const shuffled = rng.shuffle(candidates);
-    const instantHomes = shuffled.splice(0, 2 + rng.int(0, 1));
-    for (const hex of instantHomes) {
+    for (let i = 0; i < 2 + rng.int(0, 1); i++) {
+      const hex = findFootprintSite(settlement, 'home', hexMap);
+      if (!hex) break;
       completeConstruction(settlement, {
         type: 'home', hex: { q: hex.q, r: hex.r }, startedTick: tick, totalTicks: 0,
       }, hex, { hexMap, _agents: [] });
     }
 
-    const toBuild = shuffled.slice(0, 4 + rng.int(0, 4));
-    const types = rng.shuffle([...plans]).slice(0, toBuild.length);
-    toBuild.forEach((hex, i) => {
+    const buildCount = 4 + rng.int(0, 4);
+    const types = rng.shuffle([...plans]).slice(0, buildCount);
+    for (let i = 0; i < buildCount; i++) {
       const type = types[i] || 'home';
-      queueConstruction(settlement, hex, type, tick, hexMap);
-      siteProgressBoost(settlement, hex, rng);
-    });
+      const hex = findFootprintSite(settlement, type, hexMap);
+      if (!hex) continue;
+      if (queueConstruction(settlement, hex, type, tick, hexMap)) {
+        siteProgressBoost(settlement, hex, rng);
+      }
+    }
   }
 }
 

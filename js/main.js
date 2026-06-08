@@ -2,9 +2,9 @@ import { RNG, hashSeed } from './rng.js';
 import { generateWorld, WORLD_RADIUS } from './worldgen.js';
 import { spawnAgents, getAgentCountForWorld, tickAgents } from './agents.js';
 import { Renderer } from './renderer.js';
-import { pixelToHex } from './hex.js';
+import { pixelToHex, hexToPixel } from './hex.js';
 import { EventBus, EVENT } from './events.js';
-import { tickEconomy, grantJob } from './economy.js?v=3';
+import { tickEconomy, grantJob } from './economy.js?v=7';
 import { tickCrime, pardonAgent } from './crime.js';
 import { initGuilds, joinGuild, tickGuilds } from './guilds.js';
 import { tickSocial, handleDeath } from './social.js';
@@ -19,6 +19,11 @@ import { loadBuildingSprites } from './textures.js';
 import { createWallet } from './currency.js';
 import { initKingdoms, tickKingdoms } from './kingdoms.js';
 import { getBuildingInspectData } from './settlementInfo.js';
+import { getSeason, getYear, getDayInSeason, getSeasonLabel } from './seasons.js';
+import { initCaravans, tickCaravans } from './caravans.js';
+import { tickDisasters } from './disasters.js';
+import { initDiplomacy, tickDiplomacy } from './diplomacy.js';
+import { tickSimpleMagic } from './simpleMagic.js';
 
 const SPEEDS = [0, 0.25, 0.5, 1, 2, 4, 8, 'step'];
 const SPEED_LABELS = ['Pause', '0.25x', '0.5x', '1x', '2x', '4x', '8x', 'Step'];
@@ -66,7 +71,8 @@ class Game {
     this.agents = spawnAgents(this.world, agentCount, this.rng);
     this.world._agents = this.agents;
     this.guilds = initGuilds(this.world);
-    this.kingdoms = initKingdoms(this.world.settlements);
+    this.kingdoms = initDiplomacy(initKingdoms(this.world.settlements));
+    this.caravans = initCaravans();
     this.animals = [...initWildlife(this.world, this.rng), ...initLivestock(this.world.settlements, this.rng)];
     this.world.animals = this.animals;
     this.world.dungeons = this.world.dungeons || [];
@@ -297,16 +303,21 @@ class Game {
     }
 
     this.world._agents = this.agents;
+    const season = getSeason(this.day);
     this._run('agents', () => tickAgents(this.agents, this.world, this.guilds, this.bus, this.tick, this.timeOfDay, this.weather));
-    this._run('economy', () => tickEconomy(this.world, this.agents, this.bus, this.tick));
+    this._run('economy', () => tickEconomy(this.world, this.agents, this.bus, this.tick, season));
     this._run('construction', () => tickConstruction(this.world, this.agents, this.tick));
     this._run('planning', () => planNewBuildings(this.world, this.rng, this.tick));
     this._run('crime', () => tickCrime(this.agents, this.world, this.bus, this.tick, this.timeOfDay));
     this._run('guilds', () => tickGuilds(this.guilds, this.agents, this.bus, this.tick));
-    this._run('social', () => tickSocial(this.agents, this.bus, this.tick, this.rng, this.world));
+    this._run('social', () => tickSocial(this.agents, this.bus, this.tick, this.rng, this.world, season));
     this._run('animals', () => { this.animals = tickAnimals(this.animals, this.world, this.agents, this.tick); this.world.animals = this.animals; });
     this._run('adventuring', () => tickAdventuring(this.agents, this.world, this.world.dungeons, this.bus, this.tick));
     this._run('kingdoms', () => tickKingdoms(this.world, this.agents, this.kingdoms, this.bus, this.tick));
+    this._run('diplomacy', () => tickDiplomacy(this.kingdoms, this.world, this.agents, this.bus, this.tick));
+    this._run('caravans', () => { this.caravans = tickCaravans(this.caravans, this.world, this.agents, this.bus, this.tick); });
+    this._run('disasters', () => tickDisasters(this.world, this.agents, this.bus, this.tick, this.rng, season));
+    this._run('magic', () => tickSimpleMagic(this.agents, this.world, this.bus, this.tick));
 
     // periodically remove dead agents so arrays don't grow without bound
     if (this.tick % 240 === 0) this.purgeDead();
@@ -361,7 +372,23 @@ class Game {
       }
     }
 
+    // Handle camera-jump request from Almanac
+    if (this.pauseMenu._pendingJump) {
+      const jumpAgent = this.agents.find(a => a.id === this.pauseMenu._pendingJump);
+      if (jumpAgent) {
+        const p = hexToPixel(jumpAgent.q, jumpAgent.r, this.renderer.hexSize);
+        this.renderer.camera.x = -p.x;
+        this.renderer.camera.y = -p.y;
+        this.inspectAgent = jumpAgent;
+        this.renderer.selectedAgent = jumpAgent;
+        this.paused = true;
+        this.speedIndex = 0;
+      }
+      this.pauseMenu._pendingJump = null;
+    }
+
     const divineButtons = this.inspectAgent ? this.getDivineButtons() : [];
+    try {
     this.renderer.render(this.world, this.agents, this.timeOfDay, this.weather, {
       tick: this.tick,
       day: this.day,
@@ -370,14 +397,22 @@ class Game {
       inspectAgent: this.inspectAgent,
       inspectBuilding: this.inspectBuilding,
       animals: this.animals,
+      caravans: this.caravans,
       hoverAgent: this.hoverAgent,
       mouseX: this.mouseX,
       mouseY: this.mouseY,
       divineButtons,
       pauseMenu: this.pauseMenu,
       pauseMenuOpen: this.pauseMenu.open,
+      season: getSeason(this.day),
       game: this,
     });
+    } catch (err) {
+      if (!this._renderErrorLogged) {
+        this._renderErrorLogged = true;
+        console.error('[Aetherworld] render error:', err);
+      }
+    }
 
     requestAnimationFrame(t => this.loop(t));
   }
