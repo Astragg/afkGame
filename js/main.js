@@ -4,7 +4,7 @@ import { spawnAgents, getAgentCountForWorld, tickAgents } from './agents.js';
 import { Renderer } from './renderer.js';
 import { pixelToHex } from './hex.js';
 import { EventBus, EVENT } from './events.js';
-import { tickEconomy, grantJob } from './economy.js';
+import { tickEconomy, grantJob } from './economy.js?v=3';
 import { tickCrime, pardonAgent } from './crime.js';
 import { initGuilds, joinGuild, tickGuilds } from './guilds.js';
 import { tickSocial, handleDeath } from './social.js';
