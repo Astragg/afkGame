@@ -50,7 +50,7 @@ function tickSettlementEconomy(settlement, agents, world, bus, tick) {
         const yield_ = 8 + (worker.skills?.['survival.farm'] || 0) * 2;
         settlement.foodStore += yield_;
         worker.addEvent(tick, `Harvested ${yield_} food`);
-        addSkillXP(worker, 'survival', 'farm');
+        addSkillXP(worker, 'survival', 'farm', 10);
       }
       if (jobDef.type === 'fisher' && tick % 12 === 0) {
         const yield_ = 5 + (worker.skills?.['survival.fish'] || 0);
@@ -204,18 +204,6 @@ function checkTierPromotion(settlement) {
   const thresholds = [0, 15, 35, 70, 140, 280];
   if (idx < tiers.length - 1 && settlement.population >= thresholds[idx + 1]) {
     settlement.tier = tiers[idx + 1];
-  }
-}
-
-function addSkillXP(agent, branch, skill) {
-  const key = `${branch}.${skill}`;
-  if (agent.skills?.[key] !== undefined && agent.skills[key] < 10) {
-    agent.skillXP = agent.skillXP || {};
-    agent.skillXP[key] = (agent.skillXP[key] || 0) + 10;
-    if (agent.skillXP[key] >= (agent.skills[key] + 1) * 100) {
-      agent.skills[key]++;
-      agent.skillXP[key] = 0;
-    }
   }
 }
 
